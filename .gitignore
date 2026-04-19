@@ -3,3 +3,4 @@ __pycache__/
 .vinted_config.json
 .revenue_data.json
 .price_history.json
+.cookie_sync.json

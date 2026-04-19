@@ -14,6 +14,7 @@ from analyzer import parse_items, add_recommendations, calc_stats
 from email_sender import send_email
 from telegram_bot import send_alert as send_telegram
 from goal_tracker import get_monthly_summary
+from cookie_server import start_cookie_server, read_synced_cookie
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), ".vinted_config.json")
 
@@ -123,11 +124,22 @@ def main() -> None:
     log(f"Tylko gdy są pilne ogłoszenia: {cfg.get('email_only_if_urgent', True)}")
     print()
 
+    start_cookie_server()
+
     consecutive_errors = 0
 
     while True:
         try:
             cfg = load_config()  # reload in case user updated config
+
+            # Auto-update cookie from Chrome extension if a fresher one arrived
+            synced = read_synced_cookie()
+            if synced and synced.get("cookie") and synced["cookie"] != cfg.get("cookie"):
+                cfg["cookie"] = synced["cookie"]
+                # Persist updated cookie back to config file
+                with open(CONFIG_PATH, "w") as _f:
+                    json.dump(cfg, _f, indent=2)
+                log(f"Ciasteczko zaktualizowane automatycznie (sync: {synced.get('updated_at', '?')})")
 
             success = run_once(cfg)
             consecutive_errors = 0 if success else consecutive_errors + 1

@@ -13,6 +13,7 @@ from goal_tracker import add_sale, get_monthly_summary, get_last_months, GOAL_LI
 from trends import generate_sourcing_list
 from photo_advisor import get_basic_advice, get_ai_advice, detect_category
 from price_history import record_snapshot, get_price_changes, get_all_history
+from cookie_server import read_synced_cookie
 
 # ------------------------------------------------------------------ #
 # Page config
@@ -53,6 +54,17 @@ def save_config(cfg: dict) -> None:
         json.dump(cfg, f)
 
 
+def check_cookie_update(cfg: dict) -> tuple[dict, bool]:
+    """If Chrome extension synced a new cookie, update cfg and persist. Returns (cfg, updated)."""
+    synced = read_synced_cookie()
+    if synced and synced.get("cookie") and synced["cookie"] != cfg.get("cookie"):
+        cfg = dict(cfg)
+        cfg["cookie"] = synced["cookie"]
+        save_config(cfg)
+        return cfg, True
+    return cfg, False
+
+
 # ------------------------------------------------------------------ #
 # Data fetching (cached 30 min)
 # ------------------------------------------------------------------ #
@@ -85,6 +97,7 @@ def fetch_data(cookie: str, ebay_app_id: str = "", user_id_override: int = None)
 # ------------------------------------------------------------------ #
 
 cfg = load_config()
+cfg, _cookie_auto_updated = check_cookie_update(cfg)
 
 with st.sidebar:
     st.title("⚙️ Ustawienia")
@@ -272,6 +285,26 @@ Jak uzyskać klucz:
         updated["claude_api_key"] = claude_api_key
         save_config(updated)
         st.success("Zapisano!")
+
+    st.markdown("---")
+    st.markdown("### 🔌 Auto-sync ciasteczka (rozszerzenie Chrome)")
+    synced = read_synced_cookie()
+    if synced:
+        st.success(
+            f"Rozszerzenie aktywne — ostatnia sync: **{synced.get('updated_at', '?')}**"
+        )
+        if _cookie_auto_updated:
+            st.info("Ciasteczko zostało właśnie zaktualizowane automatycznie.")
+    else:
+        st.info("Brak danych z rozszerzenia Chrome.")
+    st.markdown("""
+**Jak zainstalować rozszerzenie:**
+1. Otwórz Chrome → `chrome://extensions/`
+2. Włącz **Tryb deweloperski** (prawy górny róg)
+3. Kliknij **Wczytaj rozpakowane** i wskaż folder `chrome_extension/`
+4. Uruchom tracker: `python scheduler.py` (serwer cookie startuje automatycznie)
+5. Wejdź na [vinted.pl](https://www.vinted.pl) — ciasteczko zsynchronizuje się samo
+""")
 
     st.markdown("---")
     st.markdown("### ▶️ Uruchom scheduler w tle")
