@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.vinted_config.json
+.revenue_data.json
+.price_history.json
