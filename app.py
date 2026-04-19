@@ -11,6 +11,7 @@ from analyzer import parse_items, add_recommendations, calc_stats
 from market_data import enrich_with_market_data
 from goal_tracker import add_sale, get_monthly_summary, get_last_months, GOAL_LIMIT
 from trends import generate_sourcing_list
+from photo_advisor import get_basic_advice, get_ai_advice, detect_category
 
 # ------------------------------------------------------------------ #
 # Page config
@@ -206,6 +207,32 @@ Dzięki temu program porówna Twoje ceny z tym **za ile rzeczy faktycznie się s
                 st.error(f"Błąd: {e}")
 
     st.markdown("---")
+    st.markdown("### 🤖 Claude AI (poradnik fotograficzny)")
+    st.markdown("""
+Opcjonalnie — ulepsza poradnik fotograficzny o spersonalizowane porady AI.
+**Koszt: ~0,03 zł za jedno zapytanie.**
+
+Jak uzyskać klucz:
+1. Wejdź na **console.anthropic.com**
+2. Zarejestruj się → API Keys → Create Key
+3. Skopiuj klucz (zaczyna się od `sk-ant-...`)
+""")
+    claude_api_key = st.text_input(
+        "Klucz Claude API (opcjonalnie)",
+        value=cfg.get("claude_api_key", ""),
+        type="password",
+        placeholder="sk-ant-...",
+    )
+    if claude_api_key:
+        st.success("Claude AI aktywny — poradnik fotograficzny będzie używał AI")
+
+    if st.button("💾 Zapisz klucz Claude", use_container_width=True):
+        updated = load_config()
+        updated["claude_api_key"] = claude_api_key
+        save_config(updated)
+        st.success("Zapisano!")
+
+    st.markdown("---")
     st.markdown("### ▶️ Uruchom scheduler w tle")
     st.code("python scheduler.py", language="bash")
     st.markdown("Dane są cachowane przez **30 minut**. Kliknij Odśwież aby pobrać aktualne dane z Vinted.")
@@ -262,7 +289,7 @@ st.markdown(
 # Tabs
 # ------------------------------------------------------------------ #
 
-tab1, tab2, tab3 = st.tabs(["📦 Moje ogłoszenia", "🛒 Co kupić — trendy i okazje", "🎯 Cel miesięczny"])
+tab1, tab2, tab3, tab4 = st.tabs(["📦 Moje ogłoszenia", "🛒 Co kupić — trendy i okazje", "🎯 Cel miesięczny", "📸 Jak sfotografować?"])
 
 
 # ================================================================== #
@@ -541,3 +568,102 @@ with tab3:
         fig.update_traces(texttemplate="%{text:.0f} zł")
         fig.update_layout(height=300, margin=dict(t=10, b=10))
         st.plotly_chart(fig, use_container_width=True)
+
+
+# ================================================================== #
+# TAB 4 — Photography advisor
+# ================================================================== #
+with tab4:
+    st.subheader("📸 Jak najlepiej sfotografować produkt?")
+    st.markdown("Opisz produkt który chcesz wystawić — program powie Ci dokładnie jak go sfotografować.")
+
+    col_desc, col_brand = st.columns([3, 1])
+    with col_desc:
+        product_desc = st.text_input(
+            "Opisz produkt",
+            placeholder="np. czarna kurtka Reserved rozmiar M, stan bardzo dobry",
+        )
+    with col_brand:
+        use_ai = st.toggle(
+            "🤖 Użyj Claude AI",
+            value=bool(cfg.get("claude_api_key")),
+            help="Spersonalizowana porada AI (~0,03 zł). Wymaga klucza w ustawieniach.",
+            disabled=not cfg.get("claude_api_key"),
+        )
+
+    generate_btn = st.button("📋 Generuj poradnik fotograficzny", type="primary",
+                              use_container_width=True, disabled=not product_desc)
+
+    if generate_btn and product_desc:
+        with st.spinner("Przygotowuję poradnik..."):
+            if use_ai and cfg.get("claude_api_key"):
+                advice = get_ai_advice(product_desc, cfg["claude_api_key"])
+            else:
+                advice = get_basic_advice(product_desc)
+
+        if advice.get("tryb") == "ai_error":
+            st.error(f"Błąd Claude AI: {advice.get('error')} — wyświetlam wersję podstawową.")
+            advice = get_basic_advice(product_desc)
+
+        st.markdown("---")
+
+        # Market context banner
+        if advice.get("kontekst_rynkowy"):
+            st.info(f"💰 {advice['kontekst_rynkowy']} {advice.get('porada_cenowa','')}")
+
+        # ---- AI mode ----
+        if advice.get("tryb") == "ai":
+            cost = advice.get("koszt_pln", 0)
+            st.markdown(f"*🤖 Wygenerowano przez Claude AI · koszt: {cost:.3f} zł*")
+            st.markdown("---")
+            st.markdown(advice["ai_porada"])
+
+        # ---- Basic mode ----
+        else:
+            cat_labels = {
+                "kurtka": "Kurtka", "plaszcz": "Płaszcz", "sukienka": "Sukienka",
+                "bluza": "Bluza / Sweter", "spodnie": "Spodnie / Jeansy",
+                "buty": "Buty", "torebka": "Torebka", "marynarka": "Marynarka",
+                "odziez": "Odzież",
+            }
+            cat_label = cat_labels.get(advice["kategoria"], advice["kategoria"].capitalize())
+            st.markdown(f"**Wykryta kategoria:** {cat_label} &nbsp;·&nbsp; "
+                        f"**Minimum zdjęć:** {advice['min_zdjec']}")
+
+            col_l, col_r = st.columns([1, 1])
+            with col_l:
+                st.markdown(f"🎨 **Tło:** {advice['tlo']}")
+                st.markdown(f"🌤️ **Światło:** {advice['swiatlo']}")
+                st.markdown(f"📐 **Orientacja:** {advice['orientacja']}")
+                st.markdown(f"👔 **Styl:** {advice['styl_prezentacji']}")
+
+            st.markdown("---")
+            st.subheader("📋 Plan zdjęć")
+
+            for photo in advice["plan_zdjec"]:
+                st.markdown(f"""
+<div style="background:#f8f9fa;border-left:4px solid #667eea;
+            padding:12px 16px;border-radius:4px;margin:8px 0;">
+  <strong>📷 Zdjęcie {photo['nr']} — {photo['tytul']}</strong><br>
+  <span style="color:#4a5568;">{photo['opis']}</span><br>
+  <span style="color:#718096;font-size:13px;">💡 Dlaczego: {photo['dlaczego']}</span>
+</div>""", unsafe_allow_html=True)
+
+            if advice["pro_tips"]:
+                st.markdown("---")
+                st.subheader("⭐ Pro wskazówki")
+                for tip in advice["pro_tips"]:
+                    st.markdown(f"✅ {tip}")
+
+            if advice["unikaj"]:
+                st.markdown("---")
+                st.subheader("❌ Czego unikać")
+                for avoid in advice["unikaj"]:
+                    st.markdown(f"✗ {avoid}")
+
+            if not cfg.get("claude_api_key"):
+                st.markdown("---")
+                st.info(
+                    "💡 Dodaj klucz Claude AI w ustawieniach żeby otrzymać bardziej "
+                    "spersonalizowane porady (~0,03 zł za zapytanie)."
+                )
