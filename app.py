@@ -12,6 +12,7 @@ from market_data import enrich_with_market_data
 from goal_tracker import add_sale, get_monthly_summary, get_last_months, GOAL_LIMIT
 from trends import generate_sourcing_list
 from photo_advisor import get_basic_advice, get_ai_advice, detect_category
+from price_history import record_snapshot, get_price_changes, get_all_history
 
 # ------------------------------------------------------------------ #
 # Page config
@@ -74,6 +75,7 @@ def fetch_data(cookie: str, ebay_app_id: str = "", user_id_override: int = None)
     items = add_recommendations(items)          # first pass — behaviour-based
     items = enrich_with_market_data(items, ebay_app_id or None)
     items = add_recommendations(items)          # second pass — now includes market tips
+    record_snapshot(items)
     stats = calc_stats(items)
     return items, stats, user
 
@@ -207,6 +209,45 @@ Dzięki temu program porówna Twoje ceny z tym **za ile rzeczy faktycznie się s
                 st.error(f"Błąd: {e}")
 
     st.markdown("---")
+    st.markdown("### 💬 Telegram — alerty")
+    st.markdown("""
+**Jak ustawić bota Telegram:**
+1. Napisz do [@BotFather](https://t.me/BotFather) na Telegramie
+2. Wyślij `/newbot` i podaj nazwę
+3. Skopiuj token (format: `1234567890:ABCdef...`)
+4. Napisz cokolwiek do swojego bota
+5. Otwórz: `https://api.telegram.org/botTWÓJ_TOKEN/getUpdates`
+6. Znajdź `"chat":{"id":LICZBA}` — to Twój Chat ID
+""")
+    telegram_token = st.text_input(
+        "Token bota", value=cfg.get("telegram_token", ""), type="password",
+        placeholder="1234567890:ABCdef...",
+    )
+    telegram_chat_id = st.text_input(
+        "Chat ID", value=cfg.get("telegram_chat_id", ""), placeholder="123456789",
+    )
+    if telegram_token and telegram_chat_id:
+        if st.button("🔔 Wyślij testowy alert Telegram", use_container_width=True):
+            from telegram_bot import send_telegram_message
+            ok = send_telegram_message(
+                telegram_token, telegram_chat_id,
+                "✅ <b>Vinted Tracker</b> — połączenie działa!"
+            )
+            if ok:
+                st.success("Alert wysłany! Sprawdź Telegram.")
+            else:
+                st.error("Błąd. Sprawdź token i Chat ID.")
+
+    if st.button("💾 Zapisz ustawienia Telegram", use_container_width=True):
+        updated = load_config()
+        updated.update({
+            "telegram_token": telegram_token,
+            "telegram_chat_id": telegram_chat_id,
+        })
+        save_config(updated)
+        st.success("Zapisano!")
+
+    st.markdown("---")
     st.markdown("### 🤖 Claude AI (poradnik fotograficzny)")
     st.markdown("""
 Opcjonalnie — ulepsza poradnik fotograficzny o spersonalizowane porady AI.
@@ -289,7 +330,13 @@ st.markdown(
 # Tabs
 # ------------------------------------------------------------------ #
 
-tab1, tab2, tab3, tab4 = st.tabs(["📦 Moje ogłoszenia", "🛒 Co kupić — trendy i okazje", "🎯 Cel miesięczny", "📸 Jak sfotografować?"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "📦 Moje ogłoszenia",
+    "🛒 Co kupić — trendy i okazje",
+    "🧮 Kalkulator zakupu",
+    "🎯 Cel miesięczny",
+    "📸 Jak sfotografować?",
+])
 
 
 # ================================================================== #
@@ -413,6 +460,47 @@ with tab1:
         column_config={"Link": st.column_config.LinkColumn("Link")},
     )
 
+    # ---- Price history -------------------------------------------- #
+    st.markdown("---")
+    st.subheader("📈 Historia zmian cen")
+
+    all_history = get_all_history()
+    changed_items = []
+    for item in items:
+        changes = get_price_changes(item["id"])
+        if changes and changes["liczba_snapshotow"] >= 2:
+            changed_items.append(changes)
+
+    if not changed_items:
+        st.info(
+            "Historia cen buduje się automatycznie przy każdej wizycie. "
+            "Wróć jutro żeby zobaczyć zmiany. 📊"
+        )
+    else:
+        changed_items.sort(key=lambda x: abs(x["zmiana_pln"]), reverse=True)
+        for ch in changed_items[:10]:
+            arrow = "📉" if ch["zmiana_pln"] < 0 else ("📈" if ch["zmiana_pln"] > 0 else "➡️")
+            color = "#f0fff4" if ch["zmiana_pln"] < 0 else ("#fff5f5" if ch["zmiana_pln"] > 0 else "#f8f9fa")
+            st.markdown(f"""
+<div style="background:{color};padding:10px 14px;border-radius:6px;margin:6px 0;">
+  {arrow} <strong><a href="{ch['url']}" target="_blank">{ch['tytul'][:50]}</a></strong><br>
+  <span style="color:#718096;font-size:13px;">
+    Pierwsza cena: {ch['cena_pierwsza']:.0f} zł → Obecna: {ch['cena_obecna']:.0f} zł
+    ({ch['zmiana_pln']:+.0f} zł / {ch['zmiana_procent']:+.0f}%) ·
+    obserwowane {ch['dni_obserwacji']} dni ({ch['liczba_snapshotow']} pomiarów)
+  </span>
+</div>""", unsafe_allow_html=True)
+
+            if ch["liczba_snapshotow"] > 2:
+                hist_df = pd.DataFrame(ch["historia"])
+                hist_df["data"] = pd.to_datetime(hist_df["data"])
+                fig_h = px.line(hist_df, x="data", y="cena", markers=True, height=120,
+                                color_discrete_sequence=["#667eea"])
+                fig_h.update_layout(margin=dict(t=5, b=5, l=5, r=5), showlegend=False,
+                                    xaxis_title="", yaxis_title="zł",
+                                    xaxis=dict(showgrid=False))
+                st.plotly_chart(fig_h, use_container_width=True)
+
 
 # ================================================================== #
 # TAB 2 — Trends & sourcing
@@ -496,9 +584,100 @@ with tab2:
 
 
 # ================================================================== #
-# TAB 3 — Monthly goal
+# TAB 3 — Purchase calculator
 # ================================================================== #
 with tab3:
+    st.subheader("🧮 Kalkulator opłacalności zakupu")
+    st.markdown(
+        "Sprawdź czy warto kupić towar **zanim** go kupisz. "
+        "Wpisz co chcesz kupić i za ile — program sprawdzi ceny rynkowe."
+    )
+
+    client_calc = VintedClient()
+    if cookie:
+        client_calc.set_cookie(cookie)
+
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        calc_title = st.text_input(
+            "Co chcesz kupić?",
+            placeholder="np. kurtka zimowa Reserved rozmiar M",
+            key="calc_title",
+        )
+    with col2:
+        calc_price = st.number_input(
+            "Max cena zakupu (zł)",
+            min_value=1.0, max_value=5000.0, value=30.0, step=5.0,
+            key="calc_price",
+        )
+
+    if st.button("🔍 Sprawdź opłacalność", type="primary",
+                 use_container_width=True, disabled=not calc_title):
+        with st.spinner("Szukam cen na Vinted i eBay..."):
+            from purchase_calc import estimate_profit
+            result = estimate_profit(
+                title=calc_title,
+                brand_name="",
+                max_buy_price=calc_price,
+                vinted_client=client_calc,
+                ebay_app_id=cfg.get("ebay_app_id"),
+            )
+            st.session_state["calc_result"] = result
+
+    calc_result = st.session_state.get("calc_result")
+    if calc_result:
+        if calc_result.get("error"):
+            st.error(f"Błąd: {calc_result['error']}")
+        else:
+            verdict_styles = {
+                "opłacalne":    ("#f0fff4", "#38a169", "✅"),
+                "ryzykowne":    ("#fffbf0", "#d69e2e", "⚠️"),
+                "nieopłacalne": ("#fff5f5", "#e53e3e", "❌"),
+                "brak danych":  ("#f8f9fa", "#718096", "❓"),
+            }
+            v = calc_result.get("verdict", "brak danych")
+            bg, border, icon = verdict_styles.get(v, ("#f8f9fa", "#718096", "❓"))
+            margin   = calc_result.get("estimated_margin_pct") or 0
+            profit   = calc_result.get("estimated_profit") or 0
+            sell_p   = calc_result.get("recommended_sell_price") or 0
+
+            st.markdown(f"""
+<div style="background:{bg};border-left:5px solid {border};padding:20px;border-radius:8px;margin:16px 0;">
+  <h3 style="margin:0;color:{border};">{icon} {v.upper()} — marża {margin:.0f}%</h3>
+  <p style="margin:8px 0 0;">
+    Kup za max <strong>{calc_price:.0f} zł</strong> →
+    Sprzedaj za ok. <strong>{sell_p:.0f} zł</strong> →
+    Zysk: <strong>{profit:.0f} zł</strong>
+  </p>
+</div>""", unsafe_allow_html=True)
+
+            ca, cb, cc = st.columns(3)
+            ca.metric(
+                "Vinted — mediana cen",
+                f"{calc_result['vinted_median']:.0f} zł" if calc_result.get("vinted_median") else "brak danych",
+                f"{calc_result.get('vinted_active_count', 0)} ofert aktywnych",
+            )
+            cb.metric(
+                "eBay — mediana cen",
+                f"{calc_result['ebay_median']:.0f} zł" if calc_result.get("ebay_median") else "brak danych",
+                f"{calc_result.get('ebay_sold_count', 0)} sprzedanych",
+            )
+            cc.metric("Szacowany czas sprzedaży", calc_result.get("days_to_sell_estimate", "—"))
+
+            if margin < 30:
+                st.warning("💡 Ta transakcja prawdopodobnie nie jest opłacalna. Szukaj tańszego źródła.")
+            elif margin < 60:
+                better = round(calc_price * 0.7, 0)
+                st.info(f"💡 Marża umiarkowana. Za {better:.0f} zł byłoby bardzo opłacalne.")
+            else:
+                max_pay = round(sell_p * 0.5, 0)
+                st.success(f"💡 Świetna okazja! Możesz zapłacić nawet {max_pay:.0f} zł i nadal dobrze zarobić.")
+
+
+# ================================================================== #
+# TAB 4 — Monthly goal
+# ================================================================== #
+with tab4:
     st.subheader("🎯 Cel miesięczny — 3 499 zł")
     st.markdown("Śledź przychody żeby nie przekroczyć limitu działalności nierejestrowanej.")
 
@@ -571,9 +750,9 @@ with tab3:
 
 
 # ================================================================== #
-# TAB 4 — Photography advisor
+# TAB 5 — Photography advisor
 # ================================================================== #
-with tab4:
+with tab5:
     st.subheader("📸 Jak najlepiej sfotografować produkt?")
     st.markdown("Opisz produkt który chcesz wystawić — program powie Ci dokładnie jak go sfotografować.")
 

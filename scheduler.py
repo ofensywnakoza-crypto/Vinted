@@ -12,6 +12,8 @@ from datetime import datetime
 from vinted_client import VintedClient
 from analyzer import parse_items, add_recommendations, calc_stats
 from email_sender import send_email
+from telegram_bot import send_alert as send_telegram
+from goal_tracker import get_monthly_summary
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), ".vinted_config.json")
 
@@ -32,12 +34,10 @@ def check_config(cfg: dict) -> list[str]:
     errors = []
     if not cfg.get("cookie"):
         errors.append("Brak ciasteczka sesji Vinted — skonfiguruj w: streamlit run app.py")
-    if not cfg.get("email_to"):
-        errors.append("Brak adresu email odbiorcy (email_to)")
-    if not cfg.get("email_from"):
-        errors.append("Brak adresu email nadawcy (email_from)")
-    if not cfg.get("email_password"):
-        errors.append("Brak hasła/tokenu email (email_password)")
+    has_email    = cfg.get("email_to") and cfg.get("email_from") and cfg.get("email_password")
+    has_telegram = cfg.get("telegram_token") and cfg.get("telegram_chat_id")
+    if not has_email and not has_telegram:
+        errors.append("Skonfiguruj przynajmniej jeden kanał powiadomień: email lub Telegram")
     return errors
 
 
@@ -66,21 +66,39 @@ def run_once(cfg: dict) -> bool:
     total  = stats.get("lacznie_ogloszen", 0)
     log(f"Pobrano {total} ogłoszeń, {urgent} wymaga uwagi.")
 
+    monthly    = get_monthly_summary()
     only_urgent = cfg.get("email_only_if_urgent", True)
-    if only_urgent and urgent == 0:
-        log("Wszystko w porządku — email nie zostanie wysłany (brak pilnych ogłoszeń).")
-        log("Zmień 'email_only_if_urgent' na false w konfiguracji jeśli chcesz zawsze dostawać raport.")
-        return True
+    skip_quiet  = only_urgent and urgent == 0
 
-    log(f"Wysyłam email na {cfg['email_to']}...")
-    try:
-        send_email(cfg, items, stats, login)
-        log("Email wysłany pomyślnie.")
-        return True
-    except Exception as e:
-        log(f"BŁĄD wysyłania emaila: {e}")
-        log("Sprawdź: czy hasło do aplikacji Gmail jest poprawne? Czy masz włączoną 2FA?")
-        return False
+    success = True
+
+    # --- Email ---
+    if cfg.get("email_to") and cfg.get("email_from") and cfg.get("email_password"):
+        if skip_quiet:
+            log("Wszystko w porządku — email pominięty (brak pilnych ogłoszeń).")
+        else:
+            log(f"Wysyłam email na {cfg['email_to']}...")
+            try:
+                send_email(cfg, items, stats, login)
+                log("Email wysłany pomyślnie.")
+            except Exception as e:
+                log(f"BŁĄD email: {e}")
+                success = False
+
+    # --- Telegram ---
+    if cfg.get("telegram_token") and cfg.get("telegram_chat_id"):
+        if skip_quiet:
+            log("Telegram — pominięty (brak pilnych ogłoszeń).")
+        else:
+            log("Wysyłam alert Telegram...")
+            ok = send_telegram(cfg, items, stats, login, monthly)
+            if ok:
+                log("Telegram wysłany pomyślnie.")
+            else:
+                log("BŁĄD Telegram — sprawdź token i Chat ID.")
+                success = False
+
+    return success
 
 
 def main() -> None:
