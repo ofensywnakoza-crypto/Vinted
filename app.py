@@ -108,7 +108,17 @@ with st.sidebar:
     col1, col2 = st.columns(2)
     with col1:
         if st.button("💾 Zapisz", use_container_width=True):
-            save_config({"cookie": cookie, "user_id": user_id_override})
+            save_config({
+                "cookie": cookie,
+                "user_id": user_id_override,
+                "email_to": cfg.get("email_to", ""),
+                "email_from": cfg.get("email_from", ""),
+                "email_password": cfg.get("email_password", ""),
+                "email_smtp_host": cfg.get("email_smtp_host", "smtp.gmail.com"),
+                "email_smtp_port": cfg.get("email_smtp_port", 587),
+                "email_interval_hours": cfg.get("email_interval_hours", 12),
+                "email_only_if_urgent": cfg.get("email_only_if_urgent", True),
+            })
             st.success("Zapisano!")
     with col2:
         if st.button("🔄 Odśwież dane", use_container_width=True):
@@ -116,7 +126,59 @@ with st.sidebar:
             st.rerun()
 
     st.markdown("---")
-    st.markdown("### ℹ️ Kiedy odświeżać?")
+    st.markdown("### 📧 Raporty na email")
+    st.markdown("""
+**Wymaga konta Gmail z hasłem aplikacji:**
+1. Wejdź na [myaccount.google.com](https://myaccount.google.com)
+2. Bezpieczeństwo → Weryfikacja dwuetapowa (włącz)
+3. Szukaj „Hasła do aplikacji" → stwórz nowe
+4. Wklej wygenerowane hasło poniżej
+""")
+
+    email_to = st.text_input("Twój email (odbiorca)", value=cfg.get("email_to", ""), placeholder="twoj@gmail.com")
+    email_from = st.text_input("Email nadawcy (Gmail)", value=cfg.get("email_from", ""), placeholder="twoj@gmail.com")
+    email_password = st.text_input("Hasło aplikacji Gmail", value=cfg.get("email_password", ""), type="password", placeholder="xxxx xxxx xxxx xxxx")
+    email_interval = st.selectbox(
+        "Jak często wysyłać raport?",
+        options=[6, 12, 24],
+        index=[6, 12, 24].index(int(cfg.get("email_interval_hours", 12))),
+        format_func=lambda x: f"Co {x} godzin",
+    )
+    email_only_urgent = st.checkbox(
+        "Wysyłaj tylko gdy są pilne ogłoszenia",
+        value=cfg.get("email_only_if_urgent", True),
+    )
+
+    if st.button("💾 Zapisz ustawienia email", use_container_width=True):
+        updated = load_config()
+        updated.update({
+            "email_to": email_to,
+            "email_from": email_from,
+            "email_password": email_password,
+            "email_smtp_host": "smtp.gmail.com",
+            "email_smtp_port": 587,
+            "email_interval_hours": email_interval,
+            "email_only_if_urgent": email_only_urgent,
+        })
+        save_config(updated)
+        st.success("Ustawienia email zapisane!")
+
+    if st.button("📨 Wyślij testowy email teraz", use_container_width=True):
+        test_cfg = load_config()
+        if not all([test_cfg.get("email_to"), test_cfg.get("email_from"), test_cfg.get("email_password")]):
+            st.error("Najpierw zapisz ustawienia email powyżej.")
+        else:
+            try:
+                from email_sender import send_email as _send
+                cached = fetch_data(cookie, user_id_override or None)
+                _send(test_cfg, cached[0], cached[1], cached[2].get("login", ""))
+                st.success(f"Email wysłany na {test_cfg['email_to']}!")
+            except Exception as e:
+                st.error(f"Błąd: {e}")
+
+    st.markdown("---")
+    st.markdown("### ▶️ Uruchom scheduler w tle")
+    st.code("python scheduler.py", language="bash")
     st.markdown("Dane są cachowane przez **30 minut**. Kliknij Odśwież aby pobrać aktualne dane z Vinted.")
 
 
