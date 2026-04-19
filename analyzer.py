@@ -58,6 +58,39 @@ def _score_item(item: dict) -> tuple[str, list[str]]:
     fav = item["polubionych"]
     price = item["cena"]
 
+    # --- Market data tips (highest confidence — based on real transactions) ---
+    rynek = item.get("rynek")
+    if rynek and rynek.get("verdict") not in (None, "brak danych rynkowych", "cena ok"):
+        v_med = rynek.get("vinted_median")
+        e_med = rynek.get("ebay_median")
+        rec   = rynek.get("recommended_price")
+        sources = []
+        if e_med:
+            sources.append(f"eBay: {e_med:.0f} zł ({rynek['ebay_count']} sprzedanych)")
+        if v_med:
+            sources.append(f"Vinted: {v_med:.0f} zł ({rynek['vinted_count']} aktywnych)")
+        source_str = " | ".join(sources)
+
+        verdict = rynek["verdict"]
+        if verdict == "za wysoka":
+            tips.append(
+                f"Cena za wysoka wg rynku ({source_str}). "
+                f"Sugerowana cena: {rec:.0f} zł."
+            )
+            priority = "wysoki"
+        elif verdict == "lekko za wysoka":
+            tips.append(
+                f"Cena lekko powyżej rynku ({source_str}). "
+                f"Rozważ obniżkę do {rec:.0f} zł."
+            )
+            if priority == "niski":
+                priority = "sredni"
+        elif verdict == "prawdopodobnie za niska":
+            tips.append(
+                f"Możesz zarobić więcej — rynek płaci ok. {rec:.0f} zł ({source_str})."
+            )
+
+    # --- Behaviour-based tips ---
     if days > 60:
         tips.append(f"Stoi {days} dni — obniż cenę o 20% lub dodaj do promocji")
         priority = "wysoki"
@@ -66,7 +99,8 @@ def _score_item(item: dict) -> tuple[str, list[str]]:
         priority = "wysoki"
     elif days > 14:
         tips.append("Ponad 2 tygodnie bez sprzedaży — rozważ obniżkę o 5–10%")
-        priority = max(priority, "sredni", key=lambda x: _PRIORITY_ORDER.get(x, 9))
+        if priority == "niski":
+            priority = "sredni"
 
     if views > 80 and days > 7:
         tips.append(f"{views} wyświetleń bez zakupu — cena prawdopodobnie za wysoka")
@@ -86,7 +120,10 @@ def _score_item(item: dict) -> tuple[str, list[str]]:
             priority = "sredni"
 
     if not tips:
-        tips.append("Ogłoszenie wygląda dobrze — czekaj na kupca")
+        if rynek and rynek.get("verdict") == "cena ok":
+            tips.append(f"Cena zgodna z rynkiem ({rynek['detail']}) — czekaj na kupca")
+        else:
+            tips.append("Ogłoszenie wygląda dobrze — czekaj na kupca")
 
     return priority, tips
 

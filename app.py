@@ -8,6 +8,7 @@ from datetime import datetime
 
 from vinted_client import VintedClient
 from analyzer import parse_items, add_recommendations, calc_stats
+from market_data import enrich_with_market_data
 
 # ------------------------------------------------------------------ #
 # Page config
@@ -53,7 +54,7 @@ def save_config(cfg: dict) -> None:
 # ------------------------------------------------------------------ #
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def fetch_data(cookie: str, user_id_override: int = None) -> tuple[list, dict, dict]:
+def fetch_data(cookie: str, ebay_app_id: str = "", user_id_override: int = None) -> tuple[list, dict, dict]:
     client = VintedClient()
     client.set_cookie(cookie)
 
@@ -67,7 +68,9 @@ def fetch_data(cookie: str, user_id_override: int = None) -> tuple[list, dict, d
     uid = user["id"]
     raw = client.get_all_user_items(uid)
     items = parse_items(raw)
-    items = add_recommendations(items)
+    items = add_recommendations(items)          # first pass — behaviour-based
+    items = enrich_with_market_data(items, ebay_app_id or None)
+    items = add_recommendations(items)          # second pass — now includes market tips
     stats = calc_stats(items)
     return items, stats, user
 
@@ -105,12 +108,36 @@ with st.sidebar:
         step=1,
     )
 
+    st.markdown("---")
+    st.markdown("### 🛒 Dane rynkowe eBay (opcjonalne)")
+    st.markdown("""
+Dzięki temu program porówna Twoje ceny z tym **za ile rzeczy faktycznie się sprzedają** na eBay.
+
+**Jak uzyskać darmowy klucz eBay:**
+1. Wejdź na **developer.ebay.com**
+2. Zarejestruj się (bezpłatne)
+3. Kliknij **Get an Application Key**
+4. Skopiuj **App ID (Client ID)**
+""")
+    ebay_app_id = st.text_input(
+        "Klucz eBay App ID",
+        value=cfg.get("ebay_app_id", ""),
+        type="password",
+        placeholder="TwojaAp-VintedTr-PRD-...",
+    )
+    if ebay_app_id:
+        st.success("eBay aktywny — ceny będą porównywane z rynkiem")
+    else:
+        st.info("Bez klucza eBay program korzysta tylko z danych Vinted")
+
+    st.markdown("---")
     col1, col2 = st.columns(2)
     with col1:
         if st.button("💾 Zapisz", use_container_width=True):
             save_config({
                 "cookie": cookie,
                 "user_id": user_id_override,
+                "ebay_app_id": ebay_app_id,
                 "email_to": cfg.get("email_to", ""),
                 "email_from": cfg.get("email_from", ""),
                 "email_password": cfg.get("email_password", ""),
@@ -170,7 +197,7 @@ with st.sidebar:
         else:
             try:
                 from email_sender import send_email as _send
-                cached = fetch_data(cookie, user_id_override or None)
+                cached = fetch_data(cookie, ebay_app_id, user_id_override or None)
                 _send(test_cfg, cached[0], cached[1], cached[2].get("login", ""))
                 st.success(f"Email wysłany na {test_cfg['email_to']}!")
             except Exception as e:
@@ -199,8 +226,9 @@ if not cookie:
 """)
     st.stop()
 
-with st.spinner("Pobieram dane z Vinted..."):
-    items, stats, user = fetch_data(cookie, user_id_override or None)
+spinner_msg = "Pobieram dane z Vinted i porównuję z rynkiem..." if ebay_app_id else "Pobieram dane z Vinted..."
+with st.spinner(spinner_msg):
+    items, stats, user = fetch_data(cookie, ebay_app_id, user_id_override or None)
 
 if not items and not stats:
     st.error("""
@@ -302,6 +330,19 @@ def render_item_card(item: dict) -> None:
     views = item["wyswietlen"]
     fav = item["polubionych"]
 
+    rynek = item.get("rynek")
+    market_html = ""
+    if rynek and rynek.get("vinted_count", 0) + rynek.get("ebay_count", 0) > 0:
+        v_str = f"Vinted: {rynek['vinted_median']:.0f} zł" if rynek.get("vinted_median") else ""
+        e_str = f"eBay sprzedane: {rynek['ebay_median']:.0f} zł" if rynek.get("ebay_median") else ""
+        parts = " &nbsp;|&nbsp; ".join(p for p in [v_str, e_str] if p)
+        verdict_color = {"za wysoka": "#c53030", "lekko za wysoka": "#b7791f",
+                         "prawdopodobnie za niska": "#276749", "cena ok": "#276749"}.get(rynek.get("verdict", ""), "#718096")
+        market_html = (
+            f'<br><span style="font-size:12px; color:#718096;">📊 Rynek: {parts} &nbsp;'
+            f'<span style="color:{verdict_color}; font-weight:600;">({rynek.get("verdict", "")})</span></span>'
+        )
+
     tips_html = "".join(f"<li>{t}</li>" for t in item["wskazowki"])
     st.markdown(f"""
 <div class="{css_class}">
@@ -310,6 +351,7 @@ def render_item_card(item: dict) -> None:
   &nbsp;&nbsp;|&nbsp;&nbsp; 📅 {days} dni
   &nbsp;&nbsp;|&nbsp;&nbsp; 👁 {views} wyśw.
   &nbsp;&nbsp;|&nbsp;&nbsp; ❤️ {fav} polubionych
+  {market_html}
   <br><ul style="margin:6px 0 0 0">{tips_html}</ul>
 </div>
 """, unsafe_allow_html=True)
@@ -338,10 +380,25 @@ st.markdown("---")
 
 st.subheader("📋 Wszystkie ogłoszenia")
 
+def _market_summary(item: dict) -> str:
+    r = item.get("rynek")
+    if not r:
+        return "—"
+    parts = []
+    if r.get("vinted_median"):
+        parts.append(f"V: {r['vinted_median']:.0f} zł")
+    if r.get("ebay_median"):
+        parts.append(f"eBay: {r['ebay_median']:.0f} zł")
+    verdict = r.get("verdict", "")
+    suffix = f" ({verdict})" if verdict and verdict != "brak danych rynkowych" else ""
+    return (", ".join(parts) + suffix) if parts else "brak danych"
+
+
 table_df = pd.DataFrame([{
     "Tytuł": i["tytul"],
     "Marka": i["marka"],
     "Cena (zł)": i["cena"],
+    "Rynek": _market_summary(i),
     "Dni na rynku": i["dni_na_rynku"],
     "Wyświetlenia": i["wyswietlen"],
     "Polubienia": i["polubionych"],
