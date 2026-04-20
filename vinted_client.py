@@ -1,11 +1,9 @@
 import time
 from typing import Optional
 from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.chrome.service import Service
+from webdriver_manager.microsoft import EdgeChromiumDriverManager
+from selenium.webdriver.edge.service import Service
+from selenium.webdriver.edge.options import Options
 import json
 
 HEADERS = {
@@ -29,17 +27,17 @@ class VintedClient:
         self._min_delay = 2.5
 
     def _init_driver(self):
-        """Initialize Selenium WebDriver (real browser)."""
+        """Initialize Selenium WebDriver (Edge browser)."""
         if self.driver is not None:
             return
 
-        options = webdriver.ChromeOptions()
+        options = Options()
         options.add_argument("--start-maximized")
         options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_argument(f"user-agent={HEADERS['User-Agent']}")
 
-        service = Service(ChromeDriverManager().install())
-        self.driver = webdriver.Chrome(service=service, options=options)
+        service = Service(EdgeChromiumDriverManager().install())
+        self.driver = webdriver.Edge(service=service, options=options)
 
     def set_cookie(self, cookie_value: str) -> None:
         """Parse and set cookies from browser string."""
