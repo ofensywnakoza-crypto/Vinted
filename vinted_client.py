@@ -1,6 +1,12 @@
-import requests
 import time
 from typing import Optional
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.chrome.service import Service
+import json
 
 HEADERS = {
     "User-Agent": (
@@ -17,80 +23,110 @@ HEADERS = {
 class VintedClient:
     def __init__(self, domain: str = "www.vinted.pl"):
         self.base_url = f"https://{domain}"
-        self.session = requests.Session()
-        self.session.headers.update(HEADERS)
+        self.driver = None
+        self.cookies_set = False
         self._last_request = 0.0
-        self._min_delay = 2.5  # seconds between requests — safe rate
-        self.user_id: Optional[int] = None
+        self._min_delay = 2.5
 
-    # ------------------------------------------------------------------ #
-    # Auth
-    # ------------------------------------------------------------------ #
+    def _init_driver(self):
+        """Initialize Selenium WebDriver (real browser)."""
+        if self.driver is not None:
+            return
+
+        options = webdriver.ChromeOptions()
+        options.add_argument("--start-maximized")
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_argument(f"user-agent={HEADERS['User-Agent']}")
+
+        service = Service(ChromeDriverManager().install())
+        self.driver = webdriver.Chrome(service=service, options=options)
 
     def set_cookie(self, cookie_value: str) -> None:
-        """Accept either a single _vinted_fr_session value or a full browser cookie string."""
-        domain = self.base_url.replace("https://", ".")
+        """Parse and set cookies from browser string."""
+        self._init_driver()
+        self.driver.get(self.base_url)
+        time.sleep(1)
+
         cookie_value = cookie_value.strip()
 
         if "=" in cookie_value and ";" in cookie_value:
-            # Full browser cookie string, e.g. "foo=bar; _vinted_fr_session=eyJ..."
+            # Full browser cookie string
             for part in cookie_value.split(";"):
                 part = part.strip()
                 if "=" in part:
                     name, _, value = part.partition("=")
-                    self.session.cookies.set(name.strip(), value.strip(), domain=domain, path="/")
+                    try:
+                        self.driver.add_cookie({
+                            "name": name.strip(),
+                            "value": value.strip(),
+                            "domain": ".vinted.pl",
+                            "path": "/"
+                        })
+                    except Exception:
+                        pass
         else:
             # Single _vinted_fr_session value
-            self.session.cookies.set("_vinted_fr_session", cookie_value, domain=domain, path="/")
+            try:
+                self.driver.add_cookie({
+                    "name": "_vinted_fr_session",
+                    "value": cookie_value,
+                    "domain": ".vinted.pl",
+                    "path": "/"
+                })
+            except Exception:
+                pass
+
+        self.cookies_set = True
 
     def verify_auth(self) -> bool:
         user = self.get_current_user()
         return user is not None
 
-    # ------------------------------------------------------------------ #
-    # Internal HTTP
-    # ------------------------------------------------------------------ #
-
     def _get(self, endpoint: str, params: dict = None, retries: int = 3) -> Optional[dict]:
+        """Fetch API endpoint using Selenium's browser session."""
+        if not self.cookies_set or self.driver is None:
+            return None
+
         elapsed = time.time() - self._last_request
         if elapsed < self._min_delay:
             time.sleep(self._min_delay - elapsed)
 
         url = f"{self.base_url}{endpoint}"
+        if params:
+            query = "&".join(f"{k}={v}" for k, v in params.items())
+            url = f"{url}?{query}"
+
         for attempt in range(retries):
             try:
-                resp = self.session.get(url, params=params, timeout=15)
+                # Use Selenium to fetch via JavaScript (preserves session)
+                script = f"""
+                return fetch('{url}', {{
+                    method: 'GET',
+                    headers: {{'Accept': 'application/json'}},
+                    credentials: 'include'
+                }}).then(r => r.json());
+                """
+                result = self.driver.execute_script(script)
                 self._last_request = time.time()
-                if resp.status_code == 200:
-                    return resp.json()
-                if resp.status_code == 429:
-                    wait = 30 * (attempt + 1)
-                    time.sleep(wait)
-                    continue
-                return None
-            except requests.RequestException:
+
+                if result and isinstance(result, dict):
+                    return result
+                if not result:
+                    return None
+
+            except Exception as e:
                 if attempt < retries - 1:
                     time.sleep(5)
-        return None
 
-    # ------------------------------------------------------------------ #
-    # User
-    # ------------------------------------------------------------------ #
+        return None
 
     def get_current_user(self) -> Optional[dict]:
         data = self._get("/api/v2/users/current_user")
-        if data and "user" in data:
-            self.user_id = data["user"]["id"]
-            return data["user"]
-        return None
+        return data.get("user") if data and "user" in data else None
 
     def get_user_by_id(self, user_id: int) -> Optional[dict]:
         data = self._get(f"/api/v2/users/{user_id}")
         return data.get("user") if data else None
-
-    # ------------------------------------------------------------------ #
-    # Items
-    # ------------------------------------------------------------------ #
 
     def get_user_items_page(self, user_id: int, page: int = 1, per_page: int = 96) -> Optional[dict]:
         return self._get(
@@ -133,3 +169,10 @@ class VintedClient:
 
         data = self._get("/api/v2/catalog/items", params=params)
         return data.get("items", []) if data else []
+
+    def close(self):
+        """Close the browser when done."""
+        if self.driver:
+            self.driver.quit()
+            self.driver = None
+
