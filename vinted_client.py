@@ -98,23 +98,27 @@ class VintedClient:
 
         for attempt in range(retries):
             try:
-                # Use Selenium to fetch via JavaScript (preserves session)
-                script = f"""
-                return fetch('{url}', {{
+                # execute_async_script properly waits for Promise to resolve
+                script = """
+                var done = arguments[arguments.length - 1];
+                fetch(arguments[0], {
                     method: 'GET',
-                    headers: {{'Accept': 'application/json'}},
+                    headers: {'Accept': 'application/json'},
                     credentials: 'include'
-                }}).then(r => r.json());
+                })
+                .then(r => r.json())
+                .then(data => done({ok: true, data: data}))
+                .catch(e => done({ok: false, error: e.toString()}));
                 """
-                result = self.driver.execute_script(script)
+                self.driver.set_script_timeout(20)
+                result = self.driver.execute_async_script(script, url)
                 self._last_request = time.time()
 
-                if result and isinstance(result, dict):
-                    return result
-                if not result:
-                    return None
+                if result and result.get("ok") and isinstance(result.get("data"), dict):
+                    return result["data"]
+                return None
 
-            except Exception as e:
+            except Exception:
                 if attempt < retries - 1:
                     time.sleep(5)
 
