@@ -105,11 +105,16 @@ with st.sidebar:
 
     st.markdown("### 🔑 Logowanie do Vinted")
     st.markdown("""
-**Jak skopiować ciasteczko sesji:**
+**Metoda 1 — pełny ciąg ciasteczek (zalecana):**
 1. Otwórz [vinted.pl](https://www.vinted.pl) i zaloguj się
-2. Wciśnij **F12** → zakładka **Application** (Chrome) lub **Storage** (Firefox)
-3. Kliknij **Cookies → https://www.vinted.pl**
-4. Znajdź `_vinted_fr_session` i skopiuj **Value**
+2. Wciśnij **F12** → zakładka **Network** (Sieć)
+3. Odśwież stronę (F5), kliknij pierwsze żądanie do `vinted.pl`
+4. W zakładce **Headers** znajdź `Cookie:` w sekcji Request Headers
+5. Skopiuj **całą wartość** (długi ciąg: `foo=bar; _vinted_fr_session=eyJ...`)
+
+**Metoda 2 — samo _vinted_fr_session:**
+1. F12 → **Application** → **Cookies → https://www.vinted.pl**
+2. Znajdź `_vinted_fr_session` i skopiuj **Value**
 """)
 
     cookie = st.text_input(

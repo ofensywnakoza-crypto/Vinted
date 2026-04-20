@@ -28,8 +28,20 @@ class VintedClient:
     # ------------------------------------------------------------------ #
 
     def set_cookie(self, cookie_value: str) -> None:
+        """Accept either a single _vinted_fr_session value or a full browser cookie string."""
         domain = self.base_url.replace("https://", ".")
-        self.session.cookies.set("_vinted_fr_session", cookie_value, domain=domain, path="/")
+        cookie_value = cookie_value.strip()
+
+        if "=" in cookie_value and ";" in cookie_value:
+            # Full browser cookie string, e.g. "foo=bar; _vinted_fr_session=eyJ..."
+            for part in cookie_value.split(";"):
+                part = part.strip()
+                if "=" in part:
+                    name, _, value = part.partition("=")
+                    self.session.cookies.set(name.strip(), value.strip(), domain=domain, path="/")
+        else:
+            # Single _vinted_fr_session value
+            self.session.cookies.set("_vinted_fr_session", cookie_value, domain=domain, path="/")
 
     def verify_auth(self) -> bool:
         user = self.get_current_user()
