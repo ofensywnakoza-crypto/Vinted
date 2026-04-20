@@ -1,26 +1,16 @@
-import requests
 import time
 import re
 from typing import Optional
+from curl_cffi import requests as curl_requests
 
 HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "pl-PL,pl;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Accept-Encoding": "gzip, deflate, br",
     "Referer": "https://www.vinted.pl/",
     "Origin": "https://www.vinted.pl",
-    "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124"',
-    "sec-ch-ua-mobile": "?0",
-    "sec-ch-ua-platform": '"Windows"',
     "Sec-Fetch-Dest": "empty",
     "Sec-Fetch-Mode": "cors",
     "Sec-Fetch-Site": "same-origin",
-    "X-Requested-With": "XMLHttpRequest",
 }
 
 
@@ -32,33 +22,25 @@ def _extract_token(cookie_str: str, name: str) -> Optional[str]:
 class VintedClient:
     def __init__(self, domain: str = "www.vinted.pl"):
         self.base_url = f"https://{domain}"
-        self.session = requests.Session()
-        self.session.headers.update(HEADERS)
+        self._session = curl_requests.Session(impersonate="chrome124")
+        self._session.headers.update(HEADERS)
         self._last_request = 0.0
         self._min_delay = 2.5
         self.user_id: Optional[int] = None
-        self._raw_cookie: str = ""
 
     def set_cookie(self, cookie_value: str) -> None:
         """Parse browser cookie string and set Bearer token + all cookies."""
-        self._raw_cookie = cookie_value.strip()
-        domain = ".vinted.pl"
+        cookie_value = cookie_value.strip()
 
-        if "=" in self._raw_cookie and ";" in self._raw_cookie:
-            # Full browser cookie string
-            for part in self._raw_cookie.split(";"):
-                part = part.strip()
-                if "=" in part:
-                    name, _, value = part.partition("=")
-                    self.session.cookies.set(name.strip(), value.strip(), domain=domain, path="/")
+        if "=" in cookie_value and ";" in cookie_value:
+            cookie_header = cookie_value
+            self._session.headers["Cookie"] = cookie_header
 
-            # Extract Bearer token from access_token_web
-            token = _extract_token(self._raw_cookie, "access_token_web")
+            token = _extract_token(cookie_value, "access_token_web")
             if token:
-                self.session.headers["Authorization"] = f"Bearer {token}"
+                self._session.headers["Authorization"] = f"Bearer {token}"
         else:
-            # Single _vinted_fr_session value
-            self.session.cookies.set("_vinted_fr_session", self._raw_cookie, domain=domain, path="/")
+            self._session.headers["Cookie"] = f"_vinted_fr_session={cookie_value}"
 
     def verify_auth(self) -> bool:
         return self.get_current_user() is not None
@@ -71,7 +53,7 @@ class VintedClient:
         url = f"{self.base_url}{endpoint}"
         for attempt in range(retries):
             try:
-                resp = self.session.get(url, params=params, timeout=15)
+                resp = self._session.get(url, params=params, timeout=15)
                 self._last_request = time.time()
                 if resp.status_code == 200:
                     return resp.json()
@@ -79,7 +61,7 @@ class VintedClient:
                     time.sleep(30 * (attempt + 1))
                     continue
                 return None
-            except requests.RequestException:
+            except Exception:
                 if attempt < retries - 1:
                     time.sleep(5)
         return None
