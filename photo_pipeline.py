@@ -161,18 +161,18 @@ def process_image(
 
 def _fetch_vinted_prices(query: str, per_page: int = 50) -> list[float]:
     try:
+        from curl_cffi import requests as curl_requests
         time.sleep(2.0)
-        resp = requests.get(
+        resp = curl_requests.get(
             "https://www.vinted.pl/api/v2/catalog/items",
             params={"search_text": query, "per_page": per_page, "order": "relevance"},
             headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                ),
-                "Accept": "application/json",
+                "Accept": "application/json, text/plain, */*",
+                "Accept-Language": "pl-PL,pl;q=0.9,en-US;q=0.8,en;q=0.7",
                 "Referer": "https://www.vinted.pl/",
+                "Origin": "https://www.vinted.pl",
             },
+            impersonate="chrome124",
             timeout=15,
         )
         if resp.status_code != 200:
