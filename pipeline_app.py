@@ -35,6 +35,7 @@ from photo_pipeline import (
     run_grouped,
     run_single,
 )
+from gdrive import test_connection, upload_all_results
 
 # ------------------------------------------------------------------ #
 # Page config
@@ -91,12 +92,91 @@ with st.sidebar:
     st.caption(f"`{os.path.abspath(output_dir)}`")
 
     st.markdown("---")
+    st.markdown("### Google Drive (opcjonalnie)")
+    st.caption(
+        "Po przetworzeniu wyniki automatycznie trafią na Drive. "
+        "Działa z każdego urządzenia — wystarczy link."
+    )
+
+    gdrive_folder_id = st.text_input(
+        "ID folderu Drive",
+        placeholder="1aBcDeFgHiJkLmNoPqRsTuVwXyZ",
+        help="Fragment URL po /folders/ np. drive.google.com/drive/folders/**tu**",
+    )
+
+    gdrive_creds_raw = st.text_area(
+        "Klucz serwisowy (JSON)",
+        placeholder='{"type": "service_account", "project_id": "..."}',
+        height=80,
+        help="Zawartość pliku JSON pobranego z Google Cloud Console.",
+    )
+
+    gdrive_creds: dict | None = None
+    if gdrive_creds_raw.strip():
+        try:
+            gdrive_creds = json.loads(gdrive_creds_raw)
+            st.success("JSON wczytany")
+        except json.JSONDecodeError:
+            st.error("Nieprawidłowy JSON")
+
+    gdrive_ready = bool(gdrive_creds and gdrive_folder_id.strip())
+
+    if gdrive_ready and st.button("Testuj połączenie z Drive"):
+        ok, msg = test_connection(gdrive_folder_id.strip(), gdrive_creds)
+        if ok:
+            st.success(msg)
+        else:
+            st.error(f"Błąd: {msg}")
+
+    with st.expander("Jak skonfigurować Google Drive?", expanded=False):
+        st.markdown("""
+**Jednorazowe ustawienie (~5 min):**
+
+1. Wejdź na [console.cloud.google.com](https://console.cloud.google.com)
+2. Utwórz nowy projekt → **Enable APIs** → wyszukaj **Google Drive API** → włącz
+3. **IAM & Admin** → **Service accounts** → **Create service account** → nadaj nazwę
+4. Kliknij konto → **Keys** → **Add key** → **JSON** → pobierz plik
+5. Na **Google Drive** otwórz folder wynikowy → **Udostępnij** → wklej adres email konta serwisowego (z JSONa pole `client_email`) → rola **Edytor**
+6. Skopiuj ID folderu z URL: `drive.google.com/drive/folders/`**[TO JEST ID]**
+7. Wklej JSON i ID powyżej
+
+Koszt: **0 zł** (Drive API jest darmowe).
+""")
+
+    st.markdown("---")
     libs = (
         f"- Pillow: {'✅' if PIL_OK else '❌'}\n"
         f"- rembg:  {'✅' if REMBG_OK else '❌'}\n"
-        f"- Claude: {'✅' if api_key else '❌'}"
+        f"- Claude: {'✅' if api_key else '❌'}\n"
+        f"- Drive:  {'✅' if gdrive_ready else '—'}"
     )
     st.markdown(libs)
+
+
+# ================================================================== #
+# Helpers
+# ================================================================== #
+
+def _upload_to_drive(results: list[dict]) -> None:
+    """Upload all ok result folders to Drive and store links in session_state."""
+    if not gdrive_ready:
+        return
+    ok_folders = [r["folder"] for r in results if r.get("status") == "ok" and r.get("folder")]
+    if not ok_folders:
+        return
+
+    drive_status = st.empty()
+    drive_links: dict[str, str] = {}
+
+    def cb(msg: str) -> None:
+        drive_status.markdown(f"☁️ {msg}")
+
+    outcomes = upload_all_results(ok_folders, gdrive_folder_id.strip(), gdrive_creds, cb)
+    for name, ok, url in outcomes:
+        drive_links[name] = url if ok else f"BŁĄD: {url}"
+
+    drive_status.empty()
+    st.session_state["drive_links"] = drive_links
 
 
 # ================================================================== #
@@ -341,6 +421,7 @@ if mode == MODE_VISION and uploaded_files:
                 st.session_state.pop(key, None)
 
             st.session_state["pipeline_results"] = results
+            _upload_to_drive(results)
 
     st.stop()   # vision mode ends here — results shown below after rerun
 
@@ -439,6 +520,7 @@ if run_clicked:
     progress_bar.progress(1.0)
     status_text.markdown("✅ Gotowe!")
     st.session_state["pipeline_results"] = results
+    _upload_to_drive(results)
 
 # ================================================================== #
 # Results
@@ -462,6 +544,19 @@ if err_results:
         for r in err_results:
             label = r.get("group_name") or Path(r.get("input", "?")).name
             st.error(f"{label}: {r.get('reason', 'nieznany błąd')}")
+
+# Drive links
+drive_links: dict = st.session_state.get("drive_links", {})
+if drive_links:
+    st.markdown("### ☁️ Google Drive")
+    all_ok = all(not v.startswith("BŁĄD") for v in drive_links.values())
+    if all_ok:
+        st.success(f"Wysłano {len(drive_links)} folderów na Google Drive")
+    for name, url in drive_links.items():
+        if url.startswith("BŁĄD"):
+            st.error(f"{name}: {url}")
+        else:
+            st.markdown(f"- [{name}]({url})")
 
 st.markdown("---")
 
