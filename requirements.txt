@@ -7,3 +7,5 @@ requests>=2.31.0
 curl_cffi>=0.6.0
 pytrends>=4.9.2
 anthropic>=0.40.0
+Pillow>=10.0.0
+rembg>=0.1.0
