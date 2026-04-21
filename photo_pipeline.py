@@ -37,11 +37,23 @@ try:
 except Exception:
     PIL_OK = False
 
-try:
-    from rembg import remove as _rembg_remove
-    REMBG_OK = True
-except Exception:
-    REMBG_OK = False
+# Lazy rembg check — don't import at startup (onnxruntime blocks on Windows)
+def _check_rembg() -> bool:
+    try:
+        import importlib.util
+        return (
+            importlib.util.find_spec("rembg") is not None
+            and importlib.util.find_spec("onnxruntime") is not None
+        )
+    except Exception:
+        return False
+
+REMBG_OK = _check_rembg()
+
+
+def _rembg_remove(img: "Image.Image") -> "Image.Image":
+    from rembg import remove
+    return remove(img)
 
 SUPPORTED_EXT = {".jpg", ".jpeg", ".png", ".webp"}
 OUTPUT_SIZE = (1200, 1200)
@@ -53,10 +65,6 @@ OUTPUT_SIZE = (1200, 1200)
 
 def _open_rgba(path: str) -> "Image.Image":
     return Image.open(path).convert("RGBA")
-
-
-def _remove_bg(img: "Image.Image") -> "Image.Image":
-    return _rembg_remove(img)
 
 
 def _fit_on_canvas(
@@ -124,7 +132,7 @@ def process_image(
     try:
         img = _open_rgba(input_path)
         if remove_bg and REMBG_OK:
-            img = _remove_bg(img)
+            img = _rembg_remove(img)
         result = _fit_on_canvas(
             img, bg=bg_color,
             drop_shadow=drop_shadow and remove_bg,  # shadow only makes sense after bg removal
