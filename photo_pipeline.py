@@ -34,13 +34,13 @@ import requests
 try:
     from PIL import Image
     PIL_OK = True
-except ImportError:
+except Exception:
     PIL_OK = False
 
 try:
     from rembg import remove as _rembg_remove
     REMBG_OK = True
-except ImportError:
+except Exception:
     REMBG_OK = False
 
 SUPPORTED_EXT = {".jpg", ".jpeg", ".png", ".webp"}

@@ -117,7 +117,7 @@ with st.sidebar:
         help="Zawartość pliku JSON pobranego z Google Cloud Console.",
     )
 
-    gdrive_creds: dict | None = None
+    gdrive_creds = None
     if gdrive_creds_raw.strip():
         try:
             gdrive_creds = json.loads(gdrive_creds_raw)
