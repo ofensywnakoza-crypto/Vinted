@@ -10,8 +10,9 @@ Flow per product:
     → output/{slug}/          (processed JPEGs + listing.json + listing_vinted.txt)
 
 Modes:
-  batch  — each image = separate product
-  single — all images = one product (first image used for AI analysis)
+  batch    — each image = separate product
+  single   — all images = one product (first image used for AI analysis)
+  grouped  — images grouped by filename prefix: kurtka_1.jpg + kurtka_2.jpg = one product
 """
 
 import base64
@@ -502,3 +503,67 @@ def run_single(
         "listing": listing,
         "price_data": price_data,
     }
+
+
+# ================================================================== #
+# GROUPING HELPERS
+# ================================================================== #
+
+def group_by_prefix(paths: list[str]) -> dict[str, list[str]]:
+    """
+    Group image paths by filename prefix, ignoring trailing _N / -N / (N) suffixes.
+
+    Examples:
+      kurtka_1.jpg, kurtka_2.jpg, kurtka_3.jpg  →  group "kurtka"
+      bluza-01.jpg, bluza-02.jpg                 →  group "bluza"
+      IMG_4521.jpg                               →  group "IMG_4521" (solo)
+      DSC_0001.jpg, DSC_0002.jpg                 →  group "DSC" (by common prefix)
+
+    Returns OrderedDict: {group_name: [sorted list of paths]}
+    """
+    groups: dict[str, list[str]] = {}
+    for path in sorted(paths):
+        stem = Path(path).stem
+        # Strip trailing separator + digits: kurtka_1 → kurtka, bluza-02 → bluza
+        base = re.sub(r'[\s_\-]+\d+$', '', stem).strip() or stem
+        groups.setdefault(base, []).append(path)
+    return groups
+
+
+def run_grouped(
+    groups: dict[str, list[str]],
+    output_dir: str,
+    api_key: str,
+    remove_bg: bool = True,
+    bg_color: tuple = (255, 255, 255),
+    progress: Optional[Progress] = None,
+) -> list[dict]:
+    """
+    Grouped mode: each key in `groups` = one product with potentially multiple photos.
+    Internally calls run_single per group.
+    Returns list of result dicts (one per group).
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    results = []
+    group_names = list(groups.keys())
+    total_groups = len(group_names)
+
+    for idx, name in enumerate(group_names, 1):
+        paths = groups[name]
+
+        def scoped_progress(msg: str, cur: int, tot: int, _idx=idx, _total=total_groups) -> None:
+            if progress:
+                # Map inner progress to outer slice
+                outer = (_idx - 1) / _total + (cur / max(tot, 1)) / _total
+                progress(f"Produkt {_idx}/{_total} — {msg}", int(outer * 100), 100)
+
+        result = run_single(
+            paths, output_dir, api_key,
+            remove_bg=remove_bg, bg_color=bg_color,
+            progress=scoped_progress,
+        )
+        result["group_name"] = name
+        result["photo_count"] = len(paths)
+        results.append(result)
+
+    return results
