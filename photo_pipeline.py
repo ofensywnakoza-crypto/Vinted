@@ -325,15 +325,16 @@ def generate_listing(analysis: dict, price_data: dict, api_key: str) -> dict:
         f"Próbka: {price_data.get('vinted_count', 0)} ogłoszeń | "
         f"Sugerowana cena: {price_data.get('suggested_price') or 'brak'} zł"
     )
-    prompt = _LISTING_PROMPT.format(
-        analysis=json.dumps(analysis, ensure_ascii=False, indent=2),
-        price_data=price_str,
+    prompt = (
+        _LISTING_PROMPT
+        .replace("{analysis}", json.dumps(analysis, ensure_ascii=False, indent=2))
+        .replace("{price_data}", price_str)
     )
 
     client = anthropic.Anthropic(api_key=api_key)
     resp = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=512,
+        max_tokens=1024,
         messages=[{"role": "user", "content": prompt}],
     )
 
