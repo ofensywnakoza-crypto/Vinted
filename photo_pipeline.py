@@ -214,7 +214,7 @@ def analyze_image(image_path: str, api_key: str) -> dict:
 # ================================================================== #
 
 _LISTING_PROMPT = """\
-Wygeneruj ogłoszenie na Vinted na podstawie poniższej analizy produktu.
+Wygeneruj ogłoszenie na Vinted na podstawie analizy produktu i danych rynkowych.
 
 ANALIZA:
 {analysis}
@@ -222,12 +222,34 @@ ANALIZA:
 DANE RYNKOWE:
 {price_data}
 
-ZASADY:
-- Tytuł: max 50 znaków. Zawiera: markę + kategorię + kolor + rozmiar (jeśli znany) + 1 cechę. Bez emoji.
-- Opis: 150–250 znaków. Zaczyna się od marki i stanu. Kończy krótkim CTA np. "Wysyłam tego samego dnia!".
-- Hashtagi: 8–12 tagów po polsku i angielsku, zaczynają się od #, bez spacji.
+=== ZASADY — stosuj BEZWZGLĘDNIE ===
 
-Odpowiedz WYŁĄCZNIE czystym JSON-em (bez markdown):
+TYTUŁ (po angielsku, max 60 znaków):
+Format: [Brand] [Item type] [Key feature/style] [Color] [Size jeśli znany]
+- Wyłącznie po angielsku — szerszy zasięg (PL, DE, FR, NL)
+- Marka ZAWSZE na początku jeśli rozpoznawalna
+- Pakuj słowa kluczowe jak kupujący szuka, nie jak opisujesz
+- Dodaj estetykę/styl: vintage, y2k, streetwear, grunge, oversized, slim fit itp.
+- Zero emotek, kropek, przecinków — same słowa oddzielone spacją
+- Przykład: "Adidas hoodie oversize vintage washed grey M"
+
+OPIS (po polsku, max 5 linii, ZERO ozdobników):
+Linia 1: Wymiary: pierś ? cm, długość ? cm, rękaw ? cm  ← wpisz ? jeśli niewidoczne na zdjęciu
+Linia 2: Stan: [nowa z metką / bardzo dobry / dobry / akceptowalny]
+Linia 3: Skład: [jeśli widoczny na metce, np. "100% bawełna"] ← pomiń jeśli niewidoczny
+Linia 4: [JEDEN suchy fakt o kroju/cesze/wadie — BEZ "elegancka", "klasa", "idealna do", "świetna na"]
+Linia 5: Skorzystaj z opcji Zestaw — przy zakupie kilku rzeczy z profilu automatyczny rabat 5-15%
+Linia 6: Przyjmuję zwroty
+
+HASHTAGI (po angielsku, 15–20 sztuk):
+Struktura: #brand #sub-linie #itemtype1 #itemtype2_synonim #style #color #size #aesthetic #trend #gender #fit
+- Wyłącznie po angielsku
+- Marka + jej sub-linie (#adidas #adidasoriginals #trefoil)
+- Typ kilkoma synonimami (#hoodie #sweatshirt #pullover)
+- Estetyka i trend (#y2k #vintage #streetwear #gorpcore)
+- NIE dawaj hashtagów niezwiązanych z przedmiotem
+
+Odpowiedz WYŁĄCZNIE czystym JSON-em (bez markdown, bez komentarzy):
 {
   "tytul": "...",
   "opis": "...",
