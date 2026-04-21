@@ -337,10 +337,11 @@ def save_result(
         f"{price_data.get('suggested_price')} zł"
         if price_data.get("suggested_price") else "— (brak danych rynkowych)"
     )
+    hashtags_str = " ".join(listing.get("hashtagi", []))
+    opis_z_hasztagami = f"{listing.get('opis', '')}\n\n{hashtags_str}"
     txt = (
         f"TYTUŁ:\n{listing.get('tytul', '')}\n\n"
-        f"OPIS:\n{listing.get('opis', '')}\n\n"
-        f"HASHTAGI:\n{' '.join(listing.get('hashtagi', []))}\n\n"
+        f"OPIS + HASHTAGI (skopiuj razem):\n{opis_z_hasztagami}\n\n"
         f"SUGEROWANA CENA: {price_line}\n"
         f"(Mediana Vinted: {price_data.get('vinted_median') or '—'} zł"
         f" | Próbka: {price_data.get('vinted_count', 0)} ogłoszeń)\n\n"

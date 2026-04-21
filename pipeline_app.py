@@ -509,17 +509,12 @@ for i, r in enumerate(ok_results, 1):
             st.markdown("**Tytuł**")
             st.code(listing.get("tytul", ""), language=None)
 
-            st.markdown("**Opis**")
-            st.code(listing.get("opis", ""), language=None)
-
-            st.markdown("**Hashtagi**")
             hashtags = listing.get("hashtagi", [])
-            if hashtags:
-                st.markdown(
-                    " ".join(f'<span class="tag">{t}</span>' for t in hashtags),
-                    unsafe_allow_html=True,
-                )
-                st.code(" ".join(hashtags), language=None)
+            hashtags_str = " ".join(hashtags)
+            opis_z_hasztagami = f"{listing.get('opis', '')}\n\n{hashtags_str}"
+
+            st.markdown("**Opis + hashtagi** *(skopiuj razem)*")
+            st.code(opis_z_hasztagami, language=None)
 
             st.markdown("---")
 
