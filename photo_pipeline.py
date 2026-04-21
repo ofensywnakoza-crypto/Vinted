@@ -63,12 +63,45 @@ def _fit_on_canvas(
     img: "Image.Image",
     size: tuple = OUTPUT_SIZE,
     bg: tuple = (255, 255, 255),
+    drop_shadow: bool = True,
+    shadow_offset: tuple = (6, 12),
+    shadow_blur: int = 20,
+    shadow_opacity: int = 55,
 ) -> "Image.Image":
-    """Fit image into size×size canvas preserving aspect ratio."""
+    """
+    Fit image into size×size canvas preserving aspect ratio.
+    Optionally adds a soft drop shadow for a natural product-photo look.
+
+    Shadow defaults give light from top-left — standard e-commerce convention.
+    opacity 55/255 (~22%) = subtle, not harsh.
+    """
+    from PIL import ImageFilter
+
+    # Leave padding so shadow doesn't get cropped at canvas edge
+    pad = shadow_blur * 2 + max(abs(shadow_offset[0]), abs(shadow_offset[1])) + 4
+    available = (size[0] - pad, size[1] - pad)
+
+    img.thumbnail(available, Image.LANCZOS)
+    w, h = img.width, img.height
+    cx = (size[0] - w) // 2
+    cy = (size[1] - h) // 2
+
     canvas = Image.new("RGBA", size, bg + (255,))
-    img.thumbnail(size, Image.LANCZOS)
-    offset = ((size[0] - img.width) // 2, (size[1] - img.height) // 2)
-    canvas.paste(img, offset, img)
+
+    if drop_shadow and img.mode == "RGBA":
+        # Build shadow: product's alpha channel filled with dark color
+        alpha = img.split()[3]
+        shadow = Image.new("RGBA", (w, h), (0, 0, 0, shadow_opacity))
+        shadow.putalpha(alpha)
+
+        # Place shadow offset on a full-size temp layer, then blur
+        tmp = Image.new("RGBA", size, (0, 0, 0, 0))
+        tmp.paste(shadow, (cx + shadow_offset[0], cy + shadow_offset[1]), shadow)
+        tmp = tmp.filter(ImageFilter.GaussianBlur(shadow_blur))
+
+        canvas.paste(tmp, (0, 0), tmp)
+
+    canvas.paste(img, (cx, cy), img)
     return canvas.convert("RGB")
 
 
@@ -77,9 +110,13 @@ def process_image(
     output_path: str,
     remove_bg: bool = True,
     bg_color: tuple = (255, 255, 255),
+    drop_shadow: bool = True,
+    shadow_offset: tuple = (6, 12),
+    shadow_blur: int = 20,
+    shadow_opacity: int = 55,
 ) -> bool:
     """
-    Process a single image: optional bg removal + resize to 1200×1200.
+    Process a single image: optional bg removal + resize to 1200×1200 + optional drop shadow.
     Returns True on success.
     """
     if not PIL_OK:
@@ -88,7 +125,13 @@ def process_image(
         img = _open_rgba(input_path)
         if remove_bg and REMBG_OK:
             img = _remove_bg(img)
-        result = _fit_on_canvas(img, bg=bg_color)
+        result = _fit_on_canvas(
+            img, bg=bg_color,
+            drop_shadow=drop_shadow and remove_bg,  # shadow only makes sense after bg removal
+            shadow_offset=shadow_offset,
+            shadow_blur=shadow_blur,
+            shadow_opacity=shadow_opacity,
+        )
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
         result.save(output_path, "JPEG", quality=92, optimize=True)
         return True
@@ -379,13 +422,14 @@ def _process_one(
     progress: Optional[Progress],
     total_steps: int,
     step_offset: int,
+    drop_shadow: bool = True,
 ) -> dict:
     """Internal: process one image as one product."""
     result: dict = {"input": img_path, "status": "error"}
 
     if progress:
         progress(f"[{idx}] Obrabiam zdjęcie…", step_offset + 1, total_steps)
-    if not process_image(img_path, tmp_out, remove_bg=remove_bg, bg_color=bg_color):
+    if not process_image(img_path, tmp_out, remove_bg=remove_bg, bg_color=bg_color, drop_shadow=drop_shadow):
         result["reason"] = "Błąd przetwarzania zdjęcia"
         return result
 
@@ -436,6 +480,7 @@ def run_batch(
     api_key: str,
     remove_bg: bool = True,
     bg_color: tuple = (255, 255, 255),
+    drop_shadow: bool = True,
     progress: Optional[Progress] = None,
 ) -> list[dict]:
     """
@@ -453,6 +498,7 @@ def run_batch(
         r = _process_one(
             img_path, tmp_out, remove_bg, bg_color,
             api_key, output_dir, idx, progress, total, offset,
+            drop_shadow=drop_shadow,
         )
         results.append(r)
 
@@ -465,6 +511,7 @@ def run_single(
     api_key: str,
     remove_bg: bool = True,
     bg_color: tuple = (255, 255, 255),
+    drop_shadow: bool = True,
     progress: Optional[Progress] = None,
 ) -> dict:
     """
@@ -481,7 +528,7 @@ def run_single(
         if progress:
             progress(f"Obrabiam zdjęcie {i}/{n}…", i, total)
         tmp_out = img_path + f"__proc_{i}.jpg"
-        if process_image(img_path, tmp_out, remove_bg=remove_bg, bg_color=bg_color):
+        if process_image(img_path, tmp_out, remove_bg=remove_bg, bg_color=bg_color, drop_shadow=drop_shadow):
             processed.append(tmp_out)
 
     if not processed:
@@ -717,6 +764,7 @@ def run_grouped(
     api_key: str,
     remove_bg: bool = True,
     bg_color: tuple = (255, 255, 255),
+    drop_shadow: bool = True,
     progress: Optional[Progress] = None,
 ) -> list[dict]:
     """
@@ -734,13 +782,13 @@ def run_grouped(
 
         def scoped_progress(msg: str, cur: int, tot: int, _idx=idx, _total=total_groups) -> None:
             if progress:
-                # Map inner progress to outer slice
                 outer = (_idx - 1) / _total + (cur / max(tot, 1)) / _total
                 progress(f"Produkt {_idx}/{_total} — {msg}", int(outer * 100), 100)
 
         result = run_single(
             paths, output_dir, api_key,
             remove_bg=remove_bg, bg_color=bg_color,
+            drop_shadow=drop_shadow,
             progress=scoped_progress,
         )
         result["group_name"] = name

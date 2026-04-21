@@ -83,6 +83,12 @@ with st.sidebar:
     remove_bg = st.checkbox("Usuń tło (rembg)", value=REMBG_OK, disabled=not REMBG_OK)
     if not REMBG_OK:
         st.caption("Zainstaluj: `pip install rembg`")
+    drop_shadow = st.checkbox(
+        "Dodaj cień (drop shadow)",
+        value=True,
+        disabled=not REMBG_OK,
+        help="Delikatny cień pod produktem — naturalniejszy wygląd niż płaski wycinek.",
+    )
     bg_hex   = st.color_picker("Kolor tła", "#FFFFFF")
     bg_color = _hex_to_rgb(bg_hex)
 
@@ -405,7 +411,7 @@ if mode == MODE_VISION and uploaded_files:
 
             results = run_grouped(
                 groups_to_run, output_dir, api_key,
-                remove_bg=remove_bg, bg_color=bg_color,
+                remove_bg=remove_bg, bg_color=bg_color, drop_shadow=drop_shadow,
                 progress=run_progress,
             )
             prog2.progress(1.0)
@@ -480,7 +486,7 @@ if run_clicked:
             if zip_groups:
                 results = run_grouped(
                     zip_groups, output_dir, api_key,
-                    remove_bg=remove_bg, bg_color=bg_color,
+                    remove_bg=remove_bg, bg_color=bg_color, drop_shadow=drop_shadow,
                     progress=on_progress,
                 )
             else:
@@ -498,14 +504,14 @@ if run_clicked:
             if mode == MODE_BATCH:
                 results = run_batch(
                     tmp_paths, output_dir, api_key,
-                    remove_bg=remove_bg, bg_color=bg_color,
+                    remove_bg=remove_bg, bg_color=bg_color, drop_shadow=drop_shadow,
                     progress=on_progress,
                 )
 
             elif mode == MODE_SINGLE:
                 results = [run_single(
                     tmp_paths, output_dir, api_key,
-                    remove_bg=remove_bg, bg_color=bg_color,
+                    remove_bg=remove_bg, bg_color=bg_color, drop_shadow=drop_shadow,
                     progress=on_progress,
                 )]
 
@@ -513,7 +519,7 @@ if run_clicked:
                 file_groups = group_by_prefix(tmp_paths)
                 results = run_grouped(
                     file_groups, output_dir, api_key,
-                    remove_bg=remove_bg, bg_color=bg_color,
+                    remove_bg=remove_bg, bg_color=bg_color, drop_shadow=drop_shadow,
                     progress=on_progress,
                 )
 
