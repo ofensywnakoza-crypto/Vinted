@@ -506,7 +506,165 @@ def run_single(
 
 
 # ================================================================== #
-# GROUPING HELPERS
+# VISION-BASED GROUPING
+# ================================================================== #
+
+_FINGERPRINT_PROMPT = """\
+Opisz ten produkt odzieżowy w 6 cechach do celów automatycznego grupowania zdjęć.
+Bądź konsekwentny — różne zdjęcia tego samego produktu (przód/tył/detal) muszą dawać identyczny wynik.
+
+Odpowiedz WYŁĄCZNIE czystym JSON-em:
+{
+  "kategoria": "kurtka|plaszcz|sukienka|bluza|spodnie|spodnica|koszula|tshirt|marynarka|buty|torebka|sport|odziez",
+  "marka": "nazwa marki lub 'nieznana'",
+  "kolor1": "dominujący kolor (jeden wyraz po polsku, np. czarny, granatowy, biały)",
+  "kolor2": "drugi kolor lub 'brak'",
+  "wzor": "jednolity|paski|kratka|nadruk|kwiaty|geometryczny|inny",
+  "material": "jeans|skora|dzianina|tkanina|syntetyk|welna|bawelna|inny"
+}\
+"""
+
+
+def fingerprint_image(image_path: str, api_key: str) -> dict:
+    """
+    Quick Claude Vision call to extract a compact product fingerprint.
+    Used for grouping photos of the same item. Cheap: ~200 tokens per call.
+    """
+    import anthropic
+
+    ext = Path(image_path).suffix.lower()
+    media_type = _MEDIA_TYPES.get(ext, "image/jpeg")
+    with open(image_path, "rb") as f:
+        img_b64 = base64.standard_b64encode(f.read()).decode("utf-8")
+
+    client = anthropic.Anthropic(api_key=api_key)
+    resp = client.messages.create(
+        model="claude-haiku-4-5-20251001",   # cheapest model — enough for fingerprinting
+        max_tokens=200,
+        messages=[{
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": media_type, "data": img_b64},
+                },
+                {"type": "text", "text": _FINGERPRINT_PROMPT},
+            ],
+        }],
+    )
+    raw = resp.content[0].text.strip()
+    m = re.search(r"\{.*\}", raw, re.DOTALL)
+    if m:
+        raw = m.group(0)
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {
+            "kategoria": "odziez", "marka": "nieznana",
+            "kolor1": "nieznany", "kolor2": "brak",
+            "wzor": "inny", "material": "inny",
+            "_parse_error": raw[:100],
+        }
+
+
+def _similarity_score(fp1: dict, fp2: dict) -> int:
+    """
+    Compute similarity score between two fingerprints.
+    Returns 0 if definitely different products, higher = more similar.
+
+    Scoring:
+      category match (required) : +3
+      brand match (both known)  : +3  (known mismatch → return 0 immediately)
+      primary color match       : +2
+      secondary color match     : +1
+      pattern match             : +1
+      material match            : +1
+    Max possible: 11
+    """
+    if fp1.get("kategoria") != fp2.get("kategoria"):
+        return 0
+
+    score = 3  # same category
+
+    b1 = (fp1.get("marka") or "nieznana").lower().strip()
+    b2 = (fp2.get("marka") or "nieznana").lower().strip()
+    if b1 != "nieznana" and b2 != "nieznana":
+        if b1 == b2:
+            score += 3
+        else:
+            return 0  # known different brands = definitely different products
+
+    if fp1.get("kolor1") == fp2.get("kolor1"):
+        score += 2
+    if fp1.get("kolor2") == fp2.get("kolor2"):
+        score += 1
+    if fp1.get("wzor") == fp2.get("wzor"):
+        score += 1
+    if fp1.get("material") == fp2.get("material"):
+        score += 1
+
+    return score
+
+
+_MATCH_THRESHOLD = 6  # category(3) + color(2) + one more feature
+
+
+def group_by_vision(
+    paths: list[str],
+    api_key: str,
+    progress: Optional[Progress] = None,
+) -> tuple[dict[str, list[str]], dict[str, dict]]:
+    """
+    Group images by visual similarity via Claude Vision fingerprints.
+
+    1. Fingerprint each image (one cheap Haiku call per photo).
+    2. Greedy clustering: first unassigned photo starts a group;
+       subsequent photos join if similarity score >= threshold.
+
+    Returns:
+      groups       — {group_label: [paths]}
+      fingerprints — {path: fingerprint_dict}
+    """
+    total = len(paths)
+    fingerprints: dict[str, dict] = {}
+
+    for i, path in enumerate(paths, 1):
+        if progress:
+            progress(f"Analizuję zdjęcie {i}/{total}: {Path(path).name}", i, total)
+        fingerprints[path] = fingerprint_image(path, api_key)
+
+    # Greedy clustering
+    assigned: set[str] = set()
+    groups: dict[str, list[str]] = {}
+    group_idx = 1
+
+    for path in paths:
+        if path in assigned:
+            continue
+
+        fp = fingerprints[path]
+        group: list[str] = [path]
+        assigned.add(path)
+
+        for other in paths:
+            if other in assigned:
+                continue
+            if _similarity_score(fp, fingerprints[other]) >= _MATCH_THRESHOLD:
+                group.append(other)
+                assigned.add(other)
+
+        cat   = fp.get("kategoria", "produkt")
+        brand = fp.get("marka", "").replace(" ", "_") or "nieznana"
+        color = fp.get("kolor1", "")
+        label = f"{cat}_{brand}_{color}_{group_idx:02d}"
+        groups[label] = group
+        group_idx += 1
+
+    return groups, fingerprints
+
+
+# ================================================================== #
+# GROUPING HELPERS (prefix-based)
 # ================================================================== #
 
 def group_by_prefix(paths: list[str]) -> dict[str, list[str]]:

@@ -5,11 +5,13 @@ Uruchomienie:
     streamlit run pipeline_app.py
 
 Tryby:
-  1. Batch          — wrzucasz N zdjęć, każde = osobny produkt
-  2. Jeden produkt  — wrzucasz N zdjęć, wszystkie = jeden produkt
-  3. Auto-grupuj    — wrzucasz np. kurtka_1.jpg, kurtka_2.jpg, bluza_1.jpg
-                      → program sam wykrywa grupy po nazwie pliku
-  4. ZIP z folderami— ziperujesz foldery (każdy folder = produkt), wrzucasz raz
+  1. Batch           — wrzucasz N zdjęć, każde = osobny produkt
+  2. Jeden produkt   — wrzucasz N zdjęć, wszystkie = jeden produkt
+  3. Auto-grupuj     — wrzucasz np. kurtka_1.jpg, kurtka_2.jpg, bluza_1.jpg
+                       → program sam wykrywa grupy po nazwie pliku
+  4. ZIP z folderami — ziperujesz foldery (każdy folder = produkt), wrzucasz raz
+  5. Grupuj wg zdjęć — wrzucasz zdjęcia bez żadnej konwencji, AI samo wykrywa
+                       które zdjęcia to ten sam produkt (dwuetapowy flow)
 """
 
 import io
@@ -26,7 +28,9 @@ import streamlit as st
 from photo_pipeline import (
     PIL_OK,
     REMBG_OK,
+    fingerprint_image,
     group_by_prefix,
+    group_by_vision,
     run_batch,
     run_grouped,
     run_single,
@@ -113,10 +117,11 @@ MODE_BATCH   = "Batch — każde zdjęcie = osobny produkt"
 MODE_SINGLE  = "Jeden produkt — wszystkie zdjęcia razem"
 MODE_GROUP   = "Auto-grupuj — wiele produktów, wiele zdjęć naraz"
 MODE_ZIP     = "ZIP z folderami — każdy folder = produkt"
+MODE_VISION  = "AI grupuje wg zdjęć — wrzuć wszystko bez konwencji"
 
 mode = st.radio(
     "Tryb przetwarzania",
-    [MODE_BATCH, MODE_SINGLE, MODE_GROUP, MODE_ZIP],
+    [MODE_BATCH, MODE_SINGLE, MODE_GROUP, MODE_ZIP, MODE_VISION],
     horizontal=True,
 )
 
@@ -137,6 +142,14 @@ help_texts = {
         "    1.jpg, 2.jpg, 3.jpg\n"
         "  📁 bluza_reserved/\n"
         "    1.jpg, 2.jpg\n```"
+    ),
+    MODE_VISION: (
+        "**Wrzucasz zdjęcia bez żadnej konwencji nazewnictwa.** "
+        "AI analizuje każde zdjęcie i samo wykrywa które należą do tego samego produktu.  \n\n"
+        "**Krok 1:** Wrzuć zdjęcia → kliknij **Wykryj grupy** "
+        "(tanie, ~0.002 zł/zdjęcie, model Haiku)  \n"
+        "**Krok 2:** Sprawdź wykryte grupy → kliknij **Uruchom pipeline**  \n\n"
+        "Działa nawet dla `IMG_4521.jpg`, `DSC_0032.jpg` — nazwy nie mają znaczenia."
     ),
 }
 st.info(help_texts[mode])
@@ -159,14 +172,10 @@ else:
     zip_file = None
 
 # ------------------------------------------------------------------ #
-# Preview + group detection
+# Preview + static group detection (prefix / ZIP)
 # ------------------------------------------------------------------ #
 
-groups: dict[str, list] = {}   # {group_name: [paths]} — filled in tmpdir later
-preview_groups: dict[str, list] = {}   # {group_name: [UploadedFile]} — for preview
-
 if mode == MODE_ZIP and zip_file:
-    # Peek into ZIP to show folder structure
     try:
         with zipfile.ZipFile(io.BytesIO(zip_file.getvalue())) as zf:
             folders: dict[str, list] = {}
@@ -175,21 +184,20 @@ if mode == MODE_ZIP and zip_file:
                 if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}:
                     folder_name = p.parts[0] if len(p.parts) > 1 else "_root"
                     folders.setdefault(folder_name, []).append(name)
-            if folders:
-                st.markdown(f"**Wykryto {len(folders)} folderów (produktów):**")
-                for fname, files in folders.items():
-                    st.markdown(
-                        f'<div class="group-box">📁 <b>{fname}</b> — {len(files)} zdjęć</div>',
-                        unsafe_allow_html=True,
-                    )
-            else:
-                st.warning("ZIP nie zawiera obsługiwanych zdjęć w podfolderach.")
+        if folders:
+            st.markdown(f"**Wykryto {len(folders)} folderów (produktów):**")
+            for fname, files in folders.items():
+                st.markdown(
+                    f'<div class="group-box">📁 <b>{fname}</b> — {len(files)} zdjęć</div>',
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.warning("ZIP nie zawiera obsługiwanych zdjęć w podfolderach.")
     except Exception as e:
         st.error(f"Błąd odczytu ZIP: {e}")
 
 elif uploaded_files:
     n = len(uploaded_files)
-    # Thumbnail preview (max 8)
     st.markdown(f"**Wrzucono: {n} zdjęć**")
     thumb_cols = st.columns(min(n, 8))
     for i, f in enumerate(uploaded_files[:8]):
@@ -197,27 +205,147 @@ elif uploaded_files:
     if n > 8:
         st.caption(f"…i {n - 8} więcej")
 
-    # Group preview for MODE_GROUP
     if mode == MODE_GROUP:
-        # Build preview groups from uploaded file names
         name_to_file = {f.name: f for f in uploaded_files}
-        raw_paths = list(name_to_file.keys())
-        detected = group_by_prefix(raw_paths)
-
+        detected = group_by_prefix(list(name_to_file.keys()))
         st.markdown(f"**Wykryte grupy ({len(detected)} produktów):**")
         for gname, gpaths in detected.items():
             files_str = ", ".join(Path(p).name for p in gpaths)
-            count = len(gpaths)
             st.markdown(
                 f'<div class="group-box">'
-                f'🗂 <b>{gname}</b> — {count} zdjęć: <span style="color:#718096">{files_str}</span>'
-                f'</div>',
+                f'🗂 <b>{gname}</b> — {len(gpaths)} zdjęć: '
+                f'<span style="color:#718096">{files_str}</span></div>',
                 unsafe_allow_html=True,
             )
-        preview_groups = {g: [name_to_file[p] for p in ps] for g, ps in detected.items()}
 
 # ------------------------------------------------------------------ #
-# Run button
+# MODE_VISION — two-step flow
+# ------------------------------------------------------------------ #
+
+if mode == MODE_VISION and uploaded_files:
+    st.markdown("---")
+    st.markdown("### Krok 1 — Wykryj grupy")
+
+    n = len(uploaded_files)
+    cost_est = round(n * 0.002, 2)
+    st.caption(
+        f"{n} zdjęć × ~0.002 zł = **~{cost_est} zł** (model Haiku). "
+        "Pełny pipeline uruchomisz dopiero po weryfikacji grup."
+    )
+
+    detect_btn = st.button("🔍 Wykryj grupy wg zdjęć", use_container_width=True)
+
+    if detect_btn:
+        if not api_key:
+            st.warning("Wpisz klucz Claude API.")
+        else:
+            # Save uploads to a persistent temp dir for vision mode
+            vision_tmp = os.path.join(output_dir, "_vision_tmp")
+            os.makedirs(vision_tmp, exist_ok=True)
+            tmp_paths: list[str] = []
+            for uf in uploaded_files:
+                p = os.path.join(vision_tmp, uf.name)
+                with open(p, "wb") as fh:
+                    fh.write(uf.getvalue())
+                tmp_paths.append(p)
+
+            prog = st.progress(0.0)
+            stat = st.empty()
+
+            def detect_progress(msg: str, cur: int, tot: int) -> None:
+                prog.progress(min(cur / max(tot, 1), 1.0))
+                stat.markdown(f"⏳ {msg}")
+
+            with st.spinner("Analizuję zdjęcia…"):
+                detected_groups, fingerprints = group_by_vision(
+                    tmp_paths, api_key, progress=detect_progress
+                )
+
+            prog.progress(1.0)
+            stat.markdown("✅ Analiza zakończona!")
+
+            st.session_state["vision_groups"] = detected_groups
+            st.session_state["vision_fps"] = fingerprints
+            st.session_state["vision_tmp"] = vision_tmp
+
+    # Show detected groups (after detection ran)
+    if "vision_groups" in st.session_state:
+        detected_groups = st.session_state["vision_groups"]
+        fingerprints    = st.session_state["vision_fps"]
+
+        st.markdown(f"#### Wykryto {len(detected_groups)} produktów:")
+
+        for gname, gpaths in detected_groups.items():
+            fp = fingerprints.get(gpaths[0], {})
+            brand = fp.get("marka", "?")
+            cat   = fp.get("kategoria", "?")
+            col1  = fp.get("kolor1", "?")
+            pat   = fp.get("wzor", "?")
+            mat   = fp.get("material", "?")
+
+            with st.expander(
+                f"🗂 **{gname}** — {len(gpaths)} zdjęć  |  {brand}, {cat}, {col1}",
+                expanded=True,
+            ):
+                img_cols = st.columns(min(len(gpaths), 5))
+                for i, img_path in enumerate(gpaths[:5]):
+                    if os.path.exists(img_path):
+                        img_cols[i].image(img_path, caption=Path(img_path).name, use_container_width=True)
+
+                st.markdown(
+                    f"**Fingerprint:** kategoria=`{cat}` | marka=`{brand}` | "
+                    f"kolor=`{col1}` / `{fp.get('kolor2','—')}` | "
+                    f"wzór=`{pat}` | materiał=`{mat}`"
+                )
+
+        st.markdown("---")
+        st.markdown("### Krok 2 — Uruchom pipeline")
+        st.info(
+            "Jeśli grupy wyglądają dobrze — kliknij poniżej. "
+            "Jeśli coś się źle zgrupowało, zmień tryb na 'Auto-grupuj' "
+            "i odpowiednio nazwij pliki."
+        )
+
+        run_vision_btn = st.button(
+            "⚡ Uruchom pipeline dla wykrytych grup",
+            type="primary",
+            use_container_width=True,
+        )
+
+        if run_vision_btn:
+            vision_tmp_dir = st.session_state.get("vision_tmp", "")
+            groups_to_run  = st.session_state["vision_groups"]
+
+            prog2 = st.progress(0.0)
+            stat2 = st.empty()
+
+            def run_progress(msg: str, cur: int, tot: int) -> None:
+                prog2.progress(min(cur / max(tot, 1), 1.0))
+                stat2.markdown(f"⏳ {msg}")
+
+            results = run_grouped(
+                groups_to_run, output_dir, api_key,
+                remove_bg=remove_bg, bg_color=bg_color,
+                progress=run_progress,
+            )
+            prog2.progress(1.0)
+            stat2.markdown("✅ Gotowe!")
+
+            # Cleanup vision tmp
+            import shutil
+            try:
+                shutil.rmtree(vision_tmp_dir, ignore_errors=True)
+            except Exception:
+                pass
+            for key in ("vision_groups", "vision_fps", "vision_tmp"):
+                st.session_state.pop(key, None)
+
+            st.session_state["pipeline_results"] = results
+
+    st.stop()   # vision mode ends here — results shown below after rerun
+
+# ------------------------------------------------------------------ #
+# Run button (non-vision modes)
 # ------------------------------------------------------------------ #
 
 st.markdown("---")
