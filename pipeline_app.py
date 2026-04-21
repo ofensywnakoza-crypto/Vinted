@@ -26,6 +26,7 @@ from datetime import datetime
 import streamlit as st
 
 from photo_pipeline import (
+    ANTHROPIC_OK,
     PIL_OK,
     REMBG_OK,
     fingerprint_image,
@@ -151,12 +152,15 @@ Koszt: **0 zł** (Drive API jest darmowe).
 
     st.markdown("---")
     libs = (
-        f"- Pillow: {'✅' if PIL_OK else '❌'}\n"
-        f"- rembg:  {'✅' if REMBG_OK else '❌'}\n"
-        f"- Claude: {'✅' if api_key else '❌'}\n"
-        f"- Drive:  {'✅' if gdrive_ready else '—'}"
+        f"- Pillow:    {'✅' if PIL_OK else '❌  pip install Pillow'}\n"
+        f"- rembg:     {'✅' if REMBG_OK else '❌  pip install \"rembg[cpu]\"'}\n"
+        f"- anthropic: {'✅' if ANTHROPIC_OK else '❌  pip install anthropic'}\n"
+        f"- Klucz API: {'✅' if api_key else '❌  wpisz powyżej'}\n"
+        f"- Drive:     {'✅' if gdrive_ready else '—'}"
     )
     st.markdown(libs)
+    if not ANTHROPIC_OK:
+        st.error("Zainstaluj anthropic:\n```\npip install anthropic\n```")
 
 
 # ================================================================== #
@@ -442,6 +446,10 @@ if nothing_uploaded:
     st.info("Wrzuć zdjęcia lub ZIP żeby zacząć.")
     st.stop()
 
+if not ANTHROPIC_OK:
+    st.error("Brakuje biblioteki `anthropic`. W terminalu uruchom:\n```\npip install anthropic\n```\nPotem zrestartuj aplikację.")
+    st.stop()
+
 if not api_key:
     st.warning("Wpisz klucz Claude API w panelu bocznym.")
     st.stop()
@@ -607,15 +615,23 @@ for i, r in enumerate(ok_results, 1):
 
             st.markdown("---")
 
+            # Show AI errors if calls failed
+            ai_err = analysis.get("_error") or listing.get("_error")
+            if ai_err:
+                st.error(f"Błąd Claude API: {ai_err}")
+            parse_err = analysis.get("_parse_error") or listing.get("_parse_error")
+            if parse_err:
+                st.warning(f"Błąd parsowania odpowiedzi: {parse_err}")
+
             st.markdown("**Tytuł**")
-            st.code(listing.get("tytul", ""), language=None)
+            st.code(listing.get("tytul") or "(brak — sprawdź błąd powyżej)", language=None)
 
             hashtags = listing.get("hashtagi", [])
             hashtags_str = " ".join(hashtags)
-            opis_z_hasztagami = f"{listing.get('opis', '')}\n\n{hashtags_str}"
+            opis_z_hasztagami = f"{listing.get('opis', '')}\n\n{hashtags_str}".strip()
 
             st.markdown("**Opis + hashtagi** *(skopiuj razem)*")
-            st.code(opis_z_hasztagami, language=None)
+            st.code(opis_z_hasztagami or "(brak — sprawdź błąd powyżej)", language=None)
 
             st.markdown("---")
 

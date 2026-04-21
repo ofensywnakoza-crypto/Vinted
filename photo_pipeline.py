@@ -55,6 +55,13 @@ def _rembg_remove(img: "Image.Image") -> "Image.Image":
     from rembg import remove
     return remove(img)
 
+
+try:
+    import anthropic as _anthropic_module
+    ANTHROPIC_OK = True
+except Exception:
+    ANTHROPIC_OK = False
+
 SUPPORTED_EXT = {".jpg", ".jpeg", ".png", ".webp"}
 OUTPUT_SIZE = (1200, 1200)
 
