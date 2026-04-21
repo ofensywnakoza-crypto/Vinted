@@ -1,6 +1,8 @@
 __pycache__/
 *.pyc
-.vinted_config.json
-.revenue_data.json
-.price_history.json
-.cookie_sync.json
+.env
+data/*.db
+data/*.db-journal
+uploads/
+_old_version/
+.streamlit/secrets.toml

@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Vinted Manager Sync",
+  "version": "1.0.0",
+  "description": "Automatycznie synchronizuje dane ogloszen z aplikacja Vinted Manager.",
+  "permissions": ["storage", "activeTab", "scripting"],
+  "host_permissions": [
+    "https://www.vinted.pl/*",
+    "https://www.vinted.com/*",
+    "http://127.0.0.1:8765/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.vinted.pl/*",
+        "https://www.vinted.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Vinted Manager Sync"
+  }
+}
