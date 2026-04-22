@@ -50,10 +50,15 @@ def _check_rembg() -> bool:
 
 REMBG_OK = _check_rembg()
 
+# Cached rembg session — recreated only when model changes
+_rembg_session_cache: dict = {}
 
-def _rembg_remove(img: "Image.Image") -> "Image.Image":
-    from rembg import remove
-    return remove(img)
+
+def _rembg_remove(img: "Image.Image", model: str = "birefnet-general") -> "Image.Image":
+    from rembg import remove, new_session
+    if model not in _rembg_session_cache:
+        _rembg_session_cache[model] = new_session(model)
+    return remove(img, session=_rembg_session_cache[model])
 
 
 try:
@@ -129,6 +134,7 @@ def process_image(
     shadow_offset: tuple = (6, 12),
     shadow_blur: int = 20,
     shadow_opacity: int = 55,
+    rembg_model: str = "birefnet-general",
 ) -> bool:
     """
     Process a single image: optional bg removal + resize to 1200×1200 + optional drop shadow.
@@ -139,7 +145,7 @@ def process_image(
     try:
         img = _open_rgba(input_path)
         if remove_bg and REMBG_OK:
-            img = _rembg_remove(img)
+            img = _rembg_remove(img, model=rembg_model)
         result = _fit_on_canvas(
             img, bg=bg_color,
             drop_shadow=drop_shadow and remove_bg,  # shadow only makes sense after bg removal
@@ -439,13 +445,14 @@ def _process_one(
     total_steps: int,
     step_offset: int,
     drop_shadow: bool = True,
+    rembg_model: str = "birefnet-general",
 ) -> dict:
     """Internal: process one image as one product."""
     result: dict = {"input": img_path, "status": "error"}
 
     if progress:
         progress(f"[{idx}] Obrabiam zdjęcie…", step_offset + 1, total_steps)
-    if not process_image(img_path, tmp_out, remove_bg=remove_bg, bg_color=bg_color, drop_shadow=drop_shadow):
+    if not process_image(img_path, tmp_out, remove_bg=remove_bg, bg_color=bg_color, drop_shadow=drop_shadow, rembg_model=rembg_model):
         result["reason"] = "Błąd przetwarzania zdjęcia"
         return result
 
@@ -497,6 +504,7 @@ def run_batch(
     remove_bg: bool = True,
     bg_color: tuple = (255, 255, 255),
     drop_shadow: bool = True,
+    rembg_model: str = "birefnet-general",
     progress: Optional[Progress] = None,
 ) -> list[dict]:
     """
@@ -514,7 +522,7 @@ def run_batch(
         r = _process_one(
             img_path, tmp_out, remove_bg, bg_color,
             api_key, output_dir, idx, progress, total, offset,
-            drop_shadow=drop_shadow,
+            drop_shadow=drop_shadow, rembg_model=rembg_model,
         )
         results.append(r)
 
@@ -528,6 +536,7 @@ def run_single(
     remove_bg: bool = True,
     bg_color: tuple = (255, 255, 255),
     drop_shadow: bool = True,
+    rembg_model: str = "birefnet-general",
     progress: Optional[Progress] = None,
 ) -> dict:
     """
@@ -544,7 +553,7 @@ def run_single(
         if progress:
             progress(f"Obrabiam zdjęcie {i}/{n}…", i, total)
         tmp_out = img_path + f"__proc_{i}.jpg"
-        if process_image(img_path, tmp_out, remove_bg=remove_bg, bg_color=bg_color, drop_shadow=drop_shadow):
+        if process_image(img_path, tmp_out, remove_bg=remove_bg, bg_color=bg_color, drop_shadow=drop_shadow, rembg_model=rembg_model):
             processed.append(tmp_out)
 
     if not processed:
@@ -781,6 +790,7 @@ def run_grouped(
     remove_bg: bool = True,
     bg_color: tuple = (255, 255, 255),
     drop_shadow: bool = True,
+    rembg_model: str = "birefnet-general",
     progress: Optional[Progress] = None,
 ) -> list[dict]:
     """
@@ -804,7 +814,7 @@ def run_grouped(
         result = run_single(
             paths, output_dir, api_key,
             remove_bg=remove_bg, bg_color=bg_color,
-            drop_shadow=drop_shadow,
+            drop_shadow=drop_shadow, rembg_model=rembg_model,
             progress=scoped_progress,
         )
         result["group_name"] = name

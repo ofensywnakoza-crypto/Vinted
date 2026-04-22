@@ -83,7 +83,19 @@ with st.sidebar:
     st.markdown("### Zdjęcia")
     remove_bg = st.checkbox("Usuń tło (rembg)", value=REMBG_OK, disabled=not REMBG_OK)
     if not REMBG_OK:
-        st.caption("Zainstaluj: `pip install rembg`")
+        st.caption("Zainstaluj: `pip install \"rembg[cpu]\"`")
+    rembg_model = st.selectbox(
+        "Model usuwania tła",
+        ["birefnet-general", "u2net_cloth_seg", "u2net", "isnet-general-use"],
+        index=0,
+        disabled=not (REMBG_OK and remove_bg),
+        help=(
+            "**birefnet-general** — najlepsza jakość, polecany  \n"
+            "**u2net_cloth_seg** — dedykowany ubraniom (flat lay)  \n"
+            "**u2net** — szybszy, gorsza jakość  \n"
+            "**isnet-general-use** — alternatywa do birefnet"
+        ),
+    )
     drop_shadow = st.checkbox(
         "Dodaj cień (drop shadow)",
         value=True,
@@ -416,7 +428,7 @@ if mode == MODE_VISION and uploaded_files:
             results = run_grouped(
                 groups_to_run, output_dir, api_key,
                 remove_bg=remove_bg, bg_color=bg_color, drop_shadow=drop_shadow,
-                progress=run_progress,
+                rembg_model=rembg_model, progress=run_progress,
             )
             prog2.progress(1.0)
             stat2.markdown("✅ Gotowe!")
@@ -495,7 +507,7 @@ if run_clicked:
                 results = run_grouped(
                     zip_groups, output_dir, api_key,
                     remove_bg=remove_bg, bg_color=bg_color, drop_shadow=drop_shadow,
-                    progress=on_progress,
+                    rembg_model=rembg_model, progress=on_progress,
                 )
             else:
                 st.error("Brak zdjęć w ZIP.")
@@ -513,14 +525,14 @@ if run_clicked:
                 results = run_batch(
                     tmp_paths, output_dir, api_key,
                     remove_bg=remove_bg, bg_color=bg_color, drop_shadow=drop_shadow,
-                    progress=on_progress,
+                    rembg_model=rembg_model, progress=on_progress,
                 )
 
             elif mode == MODE_SINGLE:
                 results = [run_single(
                     tmp_paths, output_dir, api_key,
                     remove_bg=remove_bg, bg_color=bg_color, drop_shadow=drop_shadow,
-                    progress=on_progress,
+                    rembg_model=rembg_model, progress=on_progress,
                 )]
 
             elif mode == MODE_GROUP:
@@ -528,7 +540,7 @@ if run_clicked:
                 results = run_grouped(
                     file_groups, output_dir, api_key,
                     remove_bg=remove_bg, bg_color=bg_color, drop_shadow=drop_shadow,
-                    progress=on_progress,
+                    rembg_model=rembg_model, progress=on_progress,
                 )
 
     progress_bar.progress(1.0)
